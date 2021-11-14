@@ -96,7 +96,7 @@ static constexpr uint32_t kICCProfileSize = kTAG_cprt_Offset + kTAG_cprt_Bytes;
 static constexpr uint32_t kICCHeader[kICCHeaderSize / 4] {
     SkEndian_SwapBE32(kICCProfileSize),  // Size of the profile
     0,                                   // Preferred CMM type (ignored)
-    SkEndian_SwapBE32(0x02100000),       // Version 2.1
+    SkEndian_SwapBE32(0x04300000),       // Version 4.3
     SkEndian_SwapBE32(kDisplay_Profile), // Display device profile
     SkEndian_SwapBE32(kRGB_ColorSpace),  // RGB input color space
     SkEndian_SwapBE32(kXYZ_PCSSpace),    // XYZ profile connection space
@@ -166,7 +166,7 @@ static constexpr uint32_t kICCTagTable[3 * kICCNumEntries] {
 
 // This is like SkFloatToFixed, but rounds to nearest, preserving as much accuracy as possible
 // when going float -> fixed -> float (it has the same accuracy when going fixed -> float -> fixed).
-// The use of double is necessary to accomodate the full potential 32-bit mantissa of the 16.16
+// The use of double is necessary to accommodate the full potential 32-bit mantissa of the 16.16
 // SkFixed value, and so avoiding rounding problems with float. Also, see the comment in SkFixed.h.
 static SkFixed float_round_to_fixed(float x) {
     return sk_float_saturate2int((float)floor((double)x * SK_Fixed1 + 0.5));

@@ -26,7 +26,7 @@ class GrFragmentProcessor;
 class GrPaint;
 class GrRecordingContext;
 class GrRenderTarget;
-class GrRenderTargetContext;
+namespace skgpu { namespace v1 { class SurfaceDrawContext; }}
 class GrResourceProvider;
 class GrStyledShape;
 class GrSurfaceProxyView;
@@ -114,7 +114,7 @@ public:
      *  successful. If false is returned then paint is unmodified.
      */
     virtual bool directFilterMaskGPU(GrRecordingContext*,
-                                     GrRenderTargetContext*,
+                                     skgpu::v1::SurfaceDrawContext*,
                                      GrPaint&& paint,
                                      const GrClip*,
                                      const SkMatrix& viewMatrix,
@@ -141,7 +141,7 @@ public:
      * paint as its src param and the filter adjust those bounds using its
      * current mask and returns the result using the dest param. Callers are
      * allowed to provide the same struct for both src and dest so each
-     * implementation must accomodate that behavior.
+     * implementation must accommodate that behavior.
      *
      *  The default impl calls filterMask with the src mask having no image,
      *  but subclasses may override this if they can compute the rect faster.
@@ -158,6 +158,14 @@ public:
      *  and ignore the BlurRec parameter.
      */
     virtual bool asABlur(BlurRec*) const;
+
+    static SkFlattenable::Type GetFlattenableType() {
+        return kSkMaskFilter_Type;
+    }
+
+    SkFlattenable::Type getFlattenableType() const override {
+        return kSkMaskFilter_Type;
+    }
 
 protected:
     SkMaskFilterBase() {}

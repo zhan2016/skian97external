@@ -16,18 +16,74 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/vk/GrVkTypes.h"
 #include "include/gpu/vk/GrVkVulkan.h"
-#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureProxy.h"
-#include "src/gpu/SkGpuDevice.h"
 #include "src/gpu/vk/GrVkGpu.h"
 #include "src/gpu/vk/GrVkImageLayout.h"
 #include "src/gpu/vk/GrVkTexture.h"
 #include "src/image/SkImage_Base.h"
+#include "src/image/SkImage_Gpu.h"
 #include "src/image/SkImage_GpuBase.h"
 #include "src/image/SkSurface_Gpu.h"
 #include "tests/Test.h"
 #include "tools/gpu/ManagedBackendTexture.h"
+#include "tools/gpu/ProxyUtils.h"
+
+DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkDRMModifierTest, reporter, ctxInfo) {
+    auto dContext = ctxInfo.directContext();
+
+    const GrVkCaps* vkCaps = static_cast<const GrVkCaps*>(dContext->priv().caps());
+    if (!vkCaps->supportsDRMFormatModifiers()) {
+        return;
+    }
+
+    // First make a normal backend texture with DRM
+    auto mbet = sk_gpu_test::ManagedBackendTexture::MakeWithoutData(
+            dContext, 1, 1, kRGBA_8888_SkColorType, GrMipmapped::kNo, GrRenderable::kNo);
+    if (!mbet) {
+        ERRORF(reporter, "Could not create backend texture.");
+        return;
+    }
+
+    GrVkImageInfo info;
+    REPORTER_ASSERT(reporter, mbet->texture().getVkImageInfo(&info));
+
+    // Next we will use the same VkImageInfo but lie to say tiling is a DRM modifier. This should
+    // cause us to think the resource is eternal/read only internally. Though since we don't
+    // explicitly pass in the tiling to anything, this shouldn't cause us to do anything illegal.
+    info.fImageTiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+
+    GrBackendTexture drmBETex = GrBackendTexture(1, 1, info);
+    GrBackendFormat drmFormat = GrBackendFormat::MakeVk(info.fFormat, true);
+    REPORTER_ASSERT(reporter, drmFormat == drmBETex.getBackendFormat());
+    REPORTER_ASSERT(reporter, drmBETex.textureType() == GrTextureType::kExternal);
+
+    // Now wrap the texture in an SkImage and make sure we have the required read only properties
+    sk_sp<SkImage> drmImage = SkImage::MakeFromTexture(dContext,
+                                                       drmBETex,
+                                                       kTopLeft_GrSurfaceOrigin,
+                                                       kRGBA_8888_SkColorType,
+                                                       kPremul_SkAlphaType,
+                                                       nullptr);
+    REPORTER_ASSERT(reporter, drmImage);
+
+    REPORTER_ASSERT(reporter,
+            GrBackendTexture::TestingOnly_Equals(drmImage->getBackendTexture(false), drmBETex));
+
+    auto[view, _] = as_IB(drmImage.get()) -> asView(dContext, GrMipmapped::kNo);
+    REPORTER_ASSERT(reporter, view);
+    const GrSurfaceProxy* proxy = view.proxy();
+    REPORTER_ASSERT(reporter, proxy);
+
+    REPORTER_ASSERT(reporter, proxy->readOnly());
+
+    const GrSurface* surf = proxy->peekSurface();
+    REPORTER_ASSERT(reporter, surf);
+    REPORTER_ASSERT(reporter, surf->readOnly());
+
+    drmImage.reset();
+}
 
 DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkImageLayoutTest, reporter, ctxInfo) {
     auto dContext = ctxInfo.directContext();
@@ -72,14 +128,14 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkImageLayoutTest, reporter, ctxInfo) {
             mbet->releaseContext());
     REPORTER_ASSERT(reporter, wrappedImage.get());
 
-    const GrSurfaceProxyView* view = as_IB(wrappedImage)->view(dContext);
-    REPORTER_ASSERT(reporter, view);
-    REPORTER_ASSERT(reporter, view->proxy()->isInstantiated());
-    GrTexture* texture = view->proxy()->peekTexture();
+    GrSurfaceProxy* proxy = sk_gpu_test::GetTextureImageProxy(wrappedImage.get(), dContext);
+    REPORTER_ASSERT(reporter, proxy);
+    REPORTER_ASSERT(reporter, proxy->isInstantiated());
+    GrTexture* texture = proxy->peekTexture();
     REPORTER_ASSERT(reporter, texture);
 
     // Verify that modifying the layout via the GrVkTexture is reflected in the GrBackendTexture
-    GrVkTexture* vkTexture = static_cast<GrVkTexture*>(texture);
+    GrVkImage* vkTexture = static_cast<GrVkTexture*>(texture)->textureImage();
     REPORTER_ASSERT(reporter, initLayout == vkTexture->currentLayout());
     vkTexture->updateImageLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
@@ -179,7 +235,7 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkTransitionExternalQueueTest, reporter, ctxInfo)
     REPORTER_ASSERT(reporter, newVkInfo.fCurrentQueueFamily == vkGpu->queueIndex());
 
     image.reset();
-    gpu->testingOnly_flushGpuAndSync();
+    dContext->submit(true);
     dContext->deleteBackendTexture(backendTex);
 }
 #endif

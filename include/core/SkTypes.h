@@ -99,14 +99,6 @@
 #define SK_CPU_SSE_LEVEL_AVX2     52
 #define SK_CPU_SSE_LEVEL_SKX      60
 
-// When targetting iOS and using gyp to generate the build files, it is not
-// possible to select files to build depending on the architecture (i.e. it
-// is not possible to use hand optimized assembly implementation). In that
-// configuration SK_BUILD_NO_OPTS is defined. Remove optimisation then.
-#ifdef SK_BUILD_NO_OPTS
-    #define SK_CPU_SSE_LEVEL 0
-#endif
-
 // Are we in GCC/Clang?
 #ifndef SK_CPU_SSE_LEVEL
     // These checks must be done in descending order to ensure we set the highest
@@ -156,12 +148,12 @@
 // ARM defines
 #if defined(__arm__) && (!defined(__APPLE__) || !TARGET_IPHONE_SIMULATOR)
     #define SK_CPU_ARM32
-#elif defined(__aarch64__) && !defined(SK_BUILD_NO_OPTS)
+#elif defined(__aarch64__)
     #define SK_CPU_ARM64
 #endif
 
 // All 64-bit ARM chips have NEON.  Many 32-bit ARM chips do too.
-#if !defined(SK_ARM_HAS_NEON) && !defined(SK_BUILD_NO_OPTS) && defined(__ARM_NEON)
+#if !defined(SK_ARM_HAS_NEON) && defined(__ARM_NEON)
     #define SK_ARM_HAS_NEON
 #endif
 
@@ -244,7 +236,11 @@
 #  define SK_SUPPORT_GPU 1
 #endif
 
-#if !SK_SUPPORT_GPU
+#if SK_SUPPORT_GPU || SK_GRAPHITE_ENABLED
+#  if !defined(SK_ENABLE_SKSL)
+#    define SK_ENABLE_SKSL
+#  endif
+#else
 #  undef SK_GL
 #  undef SK_VULKAN
 #  undef SK_METAL
@@ -342,6 +338,14 @@
 #  endif
 #endif
 
+#if !defined(SK_MAYBE_UNUSED)
+#  if defined(__clang__) || defined(__GNUC__)
+#    define SK_MAYBE_UNUSED [[maybe_unused]]
+#  else
+#    define SK_MAYBE_UNUSED
+#  endif
+#endif
+
 /**
  * If your judgment is better than the compiler's (i.e. you've profiled it),
  * you can use SK_ALWAYS_INLINE to force inlining. E.g.
@@ -396,6 +400,14 @@
 #  define GR_TEST_UTILS 0
 #endif
 
+#ifndef SK_GPU_V2
+#  define SK_GPU_V2 0
+#endif
+
+#ifndef SK_GPU_V1
+#  define SK_GPU_V1 1
+#endif
+
 #if defined(SK_HISTOGRAM_ENUMERATION)  || \
     defined(SK_HISTOGRAM_BOOLEAN)      || \
     defined(SK_HISTOGRAM_EXACT_LINEAR) || \
@@ -445,10 +457,7 @@
 [[noreturn]] SK_API extern void sk_abort_no_print(void);
 
 #ifndef SkDebugf
-    SK_API void SkDebugf(const char format[], ...);
-#endif
-#if defined(SK_BUILD_FOR_LIBFUZZER)
-    SK_API inline void SkDebugf(const char format[], ...) {}
+    SK_API void SkDebugf(const char format[], ...) SK_PRINTF_LIKE(1, 2);
 #endif
 
 // SkASSERT, SkASSERTF and SkASSERT_RELEASE can be used as stand alone assertion expressions, e.g.
@@ -467,7 +476,7 @@
 #ifdef SK_DEBUG
     #define SkASSERT(cond) SkASSERT_RELEASE(cond)
     #define SkASSERTF(cond, fmt, ...) static_cast<void>( (cond) ? (void)0 : [&]{ \
-                                          SkDebugf(fmt"\n", __VA_ARGS__);        \
+                                          SkDebugf(fmt"\n", ##__VA_ARGS__);      \
                                           SK_ABORT("assert(%s)", #cond);         \
                                       }() )
     #define SkDEBUGFAIL(message)        SK_ABORT("%s", message)
@@ -546,6 +555,15 @@ template <typename T> static constexpr T SkAlignPtr(T x) {
 }
 template <typename T> static constexpr bool SkIsAlignPtr(T x) {
     return sizeof(void*) == 8 ? SkIsAlign8(x) : SkIsAlign4(x);
+}
+
+/**
+ *  align up to a power of 2
+ */
+static inline constexpr size_t SkAlignTo(size_t x, size_t alignment) {
+    // The same as alignment && SkIsPow2(value), w/o a dependency cycle.
+    SkASSERT(alignment && (alignment & (alignment - 1)) == 0);
+    return (x + alignment - 1) & ~(alignment - 1);
 }
 
 typedef uint32_t SkFourByteTag;

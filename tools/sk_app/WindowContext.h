@@ -14,6 +14,11 @@
 
 class GrDirectContext;
 class SkSurface;
+#ifdef SK_GRAPHITE_ENABLED
+namespace skgpu {
+class Context;
+}
+#endif
 
 namespace sk_app {
 
@@ -31,10 +36,15 @@ public:
 
     virtual void resize(int w, int h) = 0;
 
+    virtual void activate(bool isActive) {}
+
     const DisplayParams& getDisplayParams() { return fDisplayParams; }
     virtual void setDisplayParams(const DisplayParams& params) = 0;
 
     GrDirectContext* directContext() const { return fContext.get(); }
+#ifdef SK_GRAPHITE_ENABLED
+    skgpu::Context* graphiteContext() const { return fGraphiteContext.get(); }
+#endif
 
     int width() const { return fWidth; }
     int height() const { return fHeight; }
@@ -45,6 +55,9 @@ protected:
     virtual bool isGpuContext() { return true;  }
 
     sk_sp<GrDirectContext> fContext;
+#if SK_GRAPHITE_ENABLED
+    sk_sp<skgpu::Context> fGraphiteContext;
+#endif
 
     int               fWidth;
     int               fHeight;
@@ -53,8 +66,8 @@ protected:
     // parameters obtained from the native window
     // Note that the platform .cpp file is responsible for
     // initializing fSampleCount and fStencilBits!
-    int               fSampleCount;
-    int               fStencilBits;
+    int               fSampleCount = 1;
+    int               fStencilBits = 0;
 };
 
 }   // namespace sk_app

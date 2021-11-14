@@ -13,7 +13,6 @@
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkColorPriv.h"
 #include "include/core/SkColorSpace.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontStyle.h"
 #include "include/core/SkFontTypes.h"
@@ -32,8 +31,6 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
-#include "include/core/SkYUVAIndex.h"
-#include "include/core/SkYUVASizeInfo.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrConfig.h"
 #include "include/gpu/GrDirectContext.h"
@@ -57,8 +54,6 @@
 #include <initializer_list>
 #include <memory>
 #include <utility>
-
-class GrRenderTargetContext;
 
 static const int kTileWidthHeight = 128;
 static const int kLabelWidth = 64;
@@ -116,7 +111,7 @@ static bool has_alpha_channel(YUVFormat format) {
 
 class YUVAPlanarConfig {
 public:
-    YUVAPlanarConfig(YUVFormat format, bool opaque) {
+    YUVAPlanarConfig(YUVFormat format, bool opaque, SkEncodedOrigin origin) : fOrigin(origin) {
         switch (format) {
             case kP016_YUVFormat:
             case kP010_YUVFormat:
@@ -189,13 +184,14 @@ public:
 private:
     SkYUVAInfo::PlaneConfig fPlaneConfig;
     SkYUVAInfo::Subsampling fSubsampling;
+    SkEncodedOrigin         fOrigin;
 };
 
 SkYUVAPixmaps YUVAPlanarConfig::makeYUVAPixmaps(SkISize dimensions,
                                                 SkYUVColorSpace yuvColorSpace,
                                                 const SkBitmap bitmaps[],
                                                 int numBitmaps) const {
-    SkYUVAInfo info(dimensions, fPlaneConfig, fSubsampling, yuvColorSpace);
+    SkYUVAInfo info(dimensions, fPlaneConfig, fSubsampling, yuvColorSpace, fOrigin);
     SkPixmap pmaps[SkYUVAInfo::kMaxPlanes];
     int n = info.numPlanes();
     if (numBitmaps < n) {
@@ -323,9 +319,11 @@ static SkPath create_splat(const SkPoint& o, SkScalar innerRadius, SkScalar oute
 
 static SkBitmap make_bitmap(SkColorType colorType, const SkPath& path,
                             const SkTDArray<SkRect>& circles, bool opaque, bool padWithRed) {
-    const SkColor kGreen  = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 178, 240, 104));
-    const SkColor kBlue   = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 173, 167, 252));
-    const SkColor kYellow = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 255, 221, 117));
+    const SkColor kGreen   = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 178, 240, 104));
+    const SkColor kBlue    = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 173, 167, 252));
+    const SkColor kYellow  = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 255, 221, 117));
+    const SkColor kMagenta = ToolUtils::color_to_565(SkColorSetARGB(0xFF, 255,  60, 217));
+    const SkColor kCyan    = ToolUtils::color_to_565(SkColorSetARGB(0xFF,  45, 237, 205));
 
     int widthHeight = kTileWidthHeight + (padWithRed ? 2 * kSubsetPadding : 0);
 
@@ -351,9 +349,16 @@ static SkBitmap make_bitmap(SkColorType colorType, const SkPath& path,
 
     canvas->drawPath(path, paint);
 
-    paint.setColor(opaque ? kYellow : SK_ColorTRANSPARENT);
     paint.setBlendMode(SkBlendMode::kSrc);
     for (int i = 0; i < circles.count(); ++i) {
+        SkColor color;
+        switch (i % 3) {
+            case 0:  color = kYellow;  break;
+            case 1:  color = kMagenta; break;
+            default: color = kCyan;    break;
+        }
+        paint.setColor(color);
+        paint.setAlpha(opaque ? 0xFF : 0x40);
         SkRect r = circles[i];
         r.inset(r.width()/4, r.height()/4);
         canvas->drawOval(r, paint);
@@ -373,38 +378,53 @@ static void convert_rgba_to_yuva(const float mtx[20], SkColor col, uint8_t yuv[4
     yuv[3] = SkColorGetA(col);
 }
 
-static void extract_planes(const SkBitmap& bm, SkYUVColorSpace yuvColorSpace, PlaneData* planes) {
-    if (kIdentity_SkYUVColorSpace == yuvColorSpace) {
+static void extract_planes(const SkBitmap& origBM,
+                           SkYUVColorSpace yuvColorSpace,
+                           SkEncodedOrigin origin,
+                           PlaneData* planes) {
+    SkImageInfo ii = origBM.info();
+    if (SkEncodedOriginSwapsWidthHeight(origin)) {
+        ii = ii.makeWH(ii.height(), ii.width());
+    }
+    SkBitmap orientedBM;
+    orientedBM.allocPixels(ii);
+    SkCanvas canvas(orientedBM);
+    SkMatrix matrix = SkEncodedOriginToMatrix(origin, origBM.width(), origBM.height());
+    SkAssertResult(matrix.invert(&matrix));
+    canvas.concat(matrix);
+    canvas.drawImage(origBM.asImage(), 0, 0);
+
+    if (yuvColorSpace == kIdentity_SkYUVColorSpace) {
         // To test the identity color space we use JPEG YUV planes
         yuvColorSpace = kJPEG_SkYUVColorSpace;
     }
 
-    SkASSERT(!(bm.width() % 2));
-    SkASSERT(!(bm.height() % 2));
+    SkASSERT(!(ii.width() % 2));
+    SkASSERT(!(ii.height() % 2));
     planes->fYFull.allocPixels(
-            SkImageInfo::Make(bm.dimensions(), kGray_8_SkColorType, kUnpremul_SkAlphaType));
+            SkImageInfo::Make(ii.dimensions(), kGray_8_SkColorType, kUnpremul_SkAlphaType));
     planes->fUFull.allocPixels(
-            SkImageInfo::Make(bm.dimensions(), kGray_8_SkColorType, kUnpremul_SkAlphaType));
+            SkImageInfo::Make(ii.dimensions(), kGray_8_SkColorType, kUnpremul_SkAlphaType));
     planes->fVFull.allocPixels(
-            SkImageInfo::Make(bm.dimensions(), kGray_8_SkColorType, kUnpremul_SkAlphaType));
-    planes->fAFull.allocPixels(SkImageInfo::MakeA8(bm.width(), bm.height()));
-    planes->fUQuarter.allocPixels(SkImageInfo::Make(bm.width()/2, bm.height()/2,
+            SkImageInfo::Make(ii.dimensions(), kGray_8_SkColorType, kUnpremul_SkAlphaType));
+    planes->fAFull.allocPixels(SkImageInfo::MakeA8(ii.dimensions()));
+    planes->fUQuarter.allocPixels(SkImageInfo::Make(ii.width()/2, ii.height()/2,
                                   kGray_8_SkColorType, kUnpremul_SkAlphaType));
-    planes->fVQuarter.allocPixels(SkImageInfo::Make(bm.width()/2, bm.height()/2,
+    planes->fVQuarter.allocPixels(SkImageInfo::Make(ii.width()/2, ii.height()/2,
                                   kGray_8_SkColorType, kUnpremul_SkAlphaType));
 
     planes->fFull.allocPixels(
-            SkImageInfo::Make(bm.dimensions(), kRGBA_F32_SkColorType, kUnpremul_SkAlphaType));
-    planes->fQuarter.allocPixels(SkImageInfo::Make(bm.width()/2, bm.height()/2,
+            SkImageInfo::Make(ii.dimensions(), kRGBA_F32_SkColorType, kUnpremul_SkAlphaType));
+    planes->fQuarter.allocPixels(SkImageInfo::Make(ii.width()/2, ii.height()/2,
                                  kRGBA_F32_SkColorType, kUnpremul_SkAlphaType));
 
     float mtx[20];
     SkColorMatrix_RGB2YUV(yuvColorSpace, mtx);
 
     SkColor4f* dst = (SkColor4f *) planes->fFull.getAddr(0, 0);
-    for (int y = 0; y < bm.height(); ++y) {
-        for (int x = 0; x < bm.width(); ++x) {
-            SkColor col = bm.getColor(x, y);
+    for (int y = 0; y < orientedBM.height(); ++y) {
+        for (int x = 0; x < orientedBM.width(); ++x) {
+            SkColor col = orientedBM.getColor(x, y);
 
             uint8_t yuva[4];
 
@@ -425,8 +445,8 @@ static void extract_planes(const SkBitmap& bm, SkYUVColorSpace yuvColorSpace, Pl
     }
 
     dst = (SkColor4f *) planes->fQuarter.getAddr(0, 0);
-    for (int y = 0; y < bm.height()/2; ++y) {
-        for (int x = 0; x < bm.width()/2; ++x) {
+    for (int y = 0; y < orientedBM.height()/2; ++y) {
+        for (int x = 0; x < orientedBM.width()/2; ++x) {
             uint32_t yAccum = 0, uAccum = 0, vAccum = 0, aAccum = 0;
 
             yAccum += *planes->fYFull.getAddr8(2*x, 2*y);
@@ -765,9 +785,6 @@ protected:
             case Type::kFromGenerator:
                 name += "_imggen";
                 break;
-            case Type::kFromTexturesCopyToExternal:
-                name += "_fromtextureswithcopy";
-                break;
         }
 
         return name;
@@ -806,17 +823,23 @@ protected:
     }
 
     bool createImages(GrDirectContext* dContext) {
+        int origin = 0;
         for (bool opaque : { false, true }) {
             for (int cs = kJPEG_SkYUVColorSpace; cs <= kLastEnum_SkYUVColorSpace; ++cs) {
                 PlaneData planes;
-                extract_planes(fOriginalBMs[opaque], (SkYUVColorSpace) cs, &planes);
+                extract_planes(fOriginalBMs[opaque],
+                               static_cast<SkYUVColorSpace>(cs),
+                               static_cast<SkEncodedOrigin>(origin + 1),  // valid origins are 1...8
+                               &planes);
 
                 for (int f = kP016_YUVFormat; f <= kLast_YUVFormat; ++f) {
                     auto format = static_cast<YUVFormat>(f);
                     SkBitmap resultBMs[4];
 
                     int numPlanes = create_YUV(planes, format, resultBMs, opaque);
-                    const YUVAPlanarConfig planarConfig(format, opaque);
+                    const YUVAPlanarConfig planarConfig(format,
+                                                        opaque,
+                                                        static_cast<SkEncodedOrigin>(origin + 1));
                     SkYUVAPixmaps pixmaps =
                             planarConfig.makeYUVAPixmaps(fOriginalBMs[opaque].dimensions(),
                                                          static_cast<SkYUVColorSpace>(cs),
@@ -826,6 +849,7 @@ protected:
 
                     fImages[opaque][cs][format] = lazyYUV->refImage(dContext, fImageType);
                 }
+                origin = (origin + 1) % 8;
             }
         }
 
@@ -894,9 +918,9 @@ protected:
             constraint = SkCanvas::kStrict_SrcRectConstraint;
         }
 
+        SkSamplingOptions sampling(SkFilterMode::kLinear);
         for (int cs = kJPEG_SkYUVColorSpace; cs <= kLastEnum_SkYUVColorSpace; ++cs) {
             SkPaint paint;
-            paint.setFilterQuality(kLow_SkFilterQuality);
             if (kIdentity_SkYUVColorSpace == cs) {
                 // The identity color space needs post processing to appear correctly
                 paint.setColorFilter(yuv_to_rgb_colorfilter());
@@ -907,7 +931,8 @@ protected:
 
                 draw_col_label(canvas, dstRect.fLeft + cellWidth / 2, cs, opaque);
 
-                canvas->drawBitmapRect(fOriginalBMs[opaque], srcRect, dstRect, nullptr, constraint);
+                canvas->drawImageRect(fOriginalBMs[opaque].asImage(), srcRect, dstRect,
+                                      SkSamplingOptions(), nullptr, constraint);
                 dstRect.offset(0.f, cellHeight + kPad);
 
                 for (int format = kP016_YUVFormat; format <= kLast_YUVFormat; ++format) {
@@ -918,10 +943,11 @@ protected:
                         // operate on the YUV components rather than the RGB components.
                         sk_sp<SkImage> csImage =
                             fImages[opaque][cs][format]->makeColorSpace(fTargetColorSpace, direct);
-                        canvas->drawImageRect(csImage, srcRect, dstRect, &paint, constraint);
+                        canvas->drawImageRect(csImage, srcRect, dstRect, sampling,
+                                              &paint, constraint);
                     } else {
                         canvas->drawImageRect(fImages[opaque][cs][format], srcRect, dstRect,
-                                              &paint, constraint);
+                                              sampling, &paint, constraint);
                     }
                     dstRect.offset(0.f, cellHeight + kPad);
                 }
@@ -959,11 +985,8 @@ DEF_GM(return new WackyYUVFormatsGM(/* target cs */ false,
 DEF_GM(return new WackyYUVFormatsGM(/* target cs */ false,
                                     /* subset */ false,
                                     WackyYUVFormatsGM::Type::kFromPixmaps);)
-DEF_GM(return new WackyYUVFormatsGM(/* target cs */ false,
-                                    /* subset */ false,
-                                    WackyYUVFormatsGM::Type::kFromTexturesCopyToExternal);)
 
-class YUVMakeColorSpaceGM : public GpuGM {
+class YUVMakeColorSpaceGM : public GM {
 public:
     YUVMakeColorSpaceGM() {
         this->setBGColor(0xFFCCCCCC);
@@ -1006,13 +1029,16 @@ protected:
     bool createImages(GrDirectContext* context) {
         for (bool opaque : { false, true }) {
             PlaneData planes;
-            extract_planes(fOriginalBMs[opaque], kJPEG_SkYUVColorSpace, &planes);
+            extract_planes(fOriginalBMs[opaque],
+                           kJPEG_SkYUVColorSpace,
+                           kTopLeft_SkEncodedOrigin,
+                           &planes);
 
             SkBitmap resultBMs[4];
 
             create_YUV(planes, kAYUV_YUVFormat, resultBMs, opaque);
 
-            YUVAPlanarConfig planarConfig(kAYUV_YUVFormat, opaque);
+            YUVAPlanarConfig planarConfig(kAYUV_YUVFormat, opaque, kTopLeft_SkEncodedOrigin);
 
             auto yuvaPixmaps = planarConfig.makeYUVAPixmaps(fOriginalBMs[opaque].dimensions(),
                                                             kJPEG_Full_SkYUVColorSpace,
@@ -1039,13 +1065,14 @@ protected:
         return true;
     }
 
-    DrawResult onGpuSetup(GrDirectContext* context, SkString* errorMsg) override {
-        if (!context || context->abandoned()) {
+    DrawResult onGpuSetup(GrDirectContext* dContext, SkString* errorMsg) override {
+        if (!dContext || dContext->abandoned()) {
+            *errorMsg = "DirectContext required to create YUV images";
             return DrawResult::kSkip;
         }
 
         this->createBitmaps();
-        if (!this->createImages(context)) {
+        if (!this->createImages(dContext)) {
             *errorMsg = "Failed to create YUV images";
             return DrawResult::kFail;
         }
@@ -1057,12 +1084,11 @@ protected:
         fImages[0][0] = fImages[0][1] = fImages[1][0] = fImages[1][1] = nullptr;
     }
 
-    DrawResult onDraw(GrRecordingContext* rContext, GrRenderTargetContext*,
-                      SkCanvas* canvas, SkString* msg) override {
+    DrawResult onDraw(SkCanvas* canvas, SkString* msg) override {
         SkASSERT(fImages[0][0] && fImages[0][1] && fImages[1][0] && fImages[1][1]);
 
-        auto dContext = GrAsDirectContext(rContext);
-        if (rContext && !dContext) {
+        auto dContext = GrAsDirectContext(canvas->recordingContext());
+        if (!dContext) {
             *msg = "YUV ColorSpace image creation requires a direct context.";
             return DrawResult::kSkip;
         }
@@ -1072,8 +1098,8 @@ protected:
             for (int opaque : { 0, 1 }) {
                 int y = kPad;
 
-                auto raster = SkImage::MakeFromBitmap(fOriginalBMs[opaque])
-                    ->makeColorSpace(fTargetColorSpace, nullptr);
+                auto raster = fOriginalBMs[opaque].asImage()->makeColorSpace(fTargetColorSpace,
+                                                                             nullptr);
                 canvas->drawImage(raster, x, y);
                 y += kTileWidthHeight + kPad;
 
@@ -1098,7 +1124,7 @@ protected:
                     SkBitmap readBack;
                     readBack.allocPixels(yuv->imageInfo());
                     SkAssertResult(yuv->readPixels(dContext, readBack.pixmap(), 0, 0));
-                    canvas->drawBitmap(readBack, x, y);
+                    canvas->drawImage(readBack.asImage(), x, y);
                 }
                 x += kTileWidthHeight + kPad;
             }
@@ -1124,33 +1150,11 @@ DEF_GM(return new YUVMakeColorSpaceGM();)
 #include "src/core/SkAutoPixmapStorage.h"
 #include "tools/Resources.h"
 
-static void draw_into_alpha(const SkImage* img, sk_sp<SkColorFilter> cf, const SkPixmap& dst) {
-    auto canvas = SkCanvas::MakeRasterDirect(dst.info(), dst.writable_addr(), dst.rowBytes());
-    canvas->scale(1.0f * dst.width() / img->width(), 1.0f * dst.height() / img->height());
-    SkPaint paint;
-    paint.setFilterQuality(kLow_SkFilterQuality);
-    paint.setColorFilter(cf);
-    paint.setBlendMode(SkBlendMode::kSrc);
-    canvas->drawImage(img, 0, 0, &paint);
-}
-
-static void split_into_yuv(const SkImage* img, SkYUVColorSpace cs, const SkPixmap dst[3]) {
-    float m[20];
-    SkColorMatrix_RGB2YUV(cs, m);
-
-    memcpy(m + 15, m + 0, 5 * sizeof(float));   // copy Y into A
-    draw_into_alpha(img, SkColorFilters::Matrix(m), dst[0]);
-
-    memcpy(m + 15, m + 5, 5 * sizeof(float));   // copy U into A
-    draw_into_alpha(img, SkColorFilters::Matrix(m), dst[1]);
-
-    memcpy(m + 15, m + 10, 5 * sizeof(float));   // copy V into A
-    draw_into_alpha(img, SkColorFilters::Matrix(m), dst[2]);
-}
-
 static void draw_diff(SkCanvas* canvas, SkScalar x, SkScalar y,
                       const SkImage* a, const SkImage* b) {
-    auto sh = SkShaders::Blend(SkBlendMode::kDifference, a->makeShader(), b->makeShader());
+    auto sh = SkShaders::Blend(SkBlendMode::kDifference,
+                               a->makeShader(SkSamplingOptions()),
+                               b->makeShader(SkSamplingOptions()));
     SkPaint paint;
     paint.setShader(sh);
     canvas->save();
@@ -1170,9 +1174,7 @@ static void draw_diff(SkCanvas* canvas, SkScalar x, SkScalar y,
 // resulting (recombined) images (gpu only for now).
 //
 class YUVSplitterGM : public skiagm::GM {
-    sk_sp<SkImage>      fOrig;
-    SkAutoPixmapStorage fStorage[3];
-    SkPixmap            fPM[3];
+    sk_sp<SkImage> fOrig;
 
 public:
     YUVSplitterGM() {}
@@ -1189,51 +1191,44 @@ protected:
 
     void onOnceBeforeDraw() override {
         fOrig = GetResourceAsImage("images/mandrill_256.png");
-
-        SkImageInfo info = SkImageInfo::MakeA8(fOrig->dimensions());
-        fStorage[0].alloc(info);
-        fStorage[1].alloc(info);
-        fStorage[2].alloc(info);
-        for (int i = 0; i < 3; ++i) {
-            fPM[i] = fStorage[i];
-        }
     }
 
     void onDraw(SkCanvas* canvas) override {
-        SkYUVAIndex indices[4];
-        indices[SkYUVAIndex::kY_Index] = {0,  SkColorChannel::kR};
-        indices[SkYUVAIndex::kU_Index] = {1,  SkColorChannel::kR};
-        indices[SkYUVAIndex::kV_Index] = {2,  SkColorChannel::kR};
-        indices[SkYUVAIndex::kA_Index] = {-1, SkColorChannel::kR};
-
         canvas->translate(fOrig->width(), 0);
         canvas->save();
-        for (auto cs : {kRec709_SkYUVColorSpace, kRec601_SkYUVColorSpace, kJPEG_SkYUVColorSpace,
+        SkYUVAInfo info;
+        std::array<sk_sp<SkImage>, SkYUVAInfo::kMaxPlanes> planes;
+        for (auto cs : {kRec709_SkYUVColorSpace,
+                        kRec601_SkYUVColorSpace,
+                        kJPEG_SkYUVColorSpace,
                         kBT2020_SkYUVColorSpace}) {
-            split_into_yuv(fOrig.get(), cs, fPM);
-            SkYUVAInfo yuvaInfo(fOrig->dimensions(),
-                                SkYUVAInfo::PlaneConfig::kY_U_V,
-                                SkYUVAInfo::Subsampling::k444,
-                                cs);
-            auto yuvaPixmaps = SkYUVAPixmaps::FromExternalPixmaps(yuvaInfo, fPM);
+            std::tie(planes, info) = sk_gpu_test::MakeYUVAPlanesAsA8(fOrig.get(),
+                                                                     cs,
+                                                                     SkYUVAInfo::Subsampling::k444,
+                                                                     /*recording context*/ nullptr);
+            SkPixmap pixmaps[4];
+            for (int i = 0; i < info.numPlanes(); ++i) {
+                planes[i]->peekPixels(&pixmaps[i]);
+            }
+            auto yuvaPixmaps = SkYUVAPixmaps::FromExternalPixmaps(info, pixmaps);
             auto img = SkImage::MakeFromYUVAPixmaps(canvas->recordingContext(),
                                                     yuvaPixmaps,
                                                     GrMipMapped::kNo,
                                                     /* limit to max tex size */ false,
                                                     /* color space */ nullptr);
             if (img) {
-                canvas->drawImage(img, 0, 0, nullptr);
+                canvas->drawImage(img, 0, 0);
                 draw_diff(canvas, 0, fOrig->height(), fOrig.get(), img.get());
             }
             canvas->translate(fOrig->width(), 0);
         }
         canvas->restore();
         canvas->translate(-fOrig->width(), 0);
-
-        canvas->drawImage(SkImage::MakeRasterCopy(fPM[0]), 0, 0, nullptr);
-        canvas->drawImage(SkImage::MakeRasterCopy(fPM[1]), 0, fPM[0].height(), nullptr);
-        canvas->drawImage(SkImage::MakeRasterCopy(fPM[2]),
-                          0, fPM[0].height() + fPM[1].height(), nullptr);
+        int y = 0;
+        for (int i = 0; i < info.numPlanes(); ++i) {
+            canvas->drawImage(planes[i], 0, y);
+            y += planes[i]->height();
+        }
     }
 
 private:

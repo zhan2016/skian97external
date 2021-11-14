@@ -27,7 +27,7 @@ const (
 )
 
 var (
-	canaryRollNotCreatedErr        = errors.New("Canary roll could not be created. Ask the trooper to investigate (or directly ping rmistry@) if this happens consistently.")
+	canaryRollNotCreatedErr        = errors.New("Canary roll could not be created. Ask the Infra Gardener to investigate (or directly ping rmistry@) if this happens consistently.")
 	canaryRollSuccessTooQuicklyErr = fmt.Errorf("Canary roll returned success in less than %s. Failing canary due to skbug.com/10563.", MinWaitDuration)
 
 	// Lets add the roll link only once to step data.
@@ -61,7 +61,7 @@ func main() {
 	}
 
 	// Create token source with scope for datastore access.
-	ts, err := auth_steps.Init(ctx, *local, auth.SCOPE_USERINFO_EMAIL, datastore.ScopeDatastore)
+	ts, err := auth_steps.Init(ctx, *local, auth.ScopeUserinfoEmail, datastore.ScopeDatastore)
 	if err != nil {
 		td.Fatal(ctx, skerr.Wrap(err))
 	}
@@ -127,7 +127,7 @@ func waitForCanaryRoll(parentCtx context.Context, manualRollDB manual.DB, rollId
 	startTime := time.Now()
 
 	// For writing to the step's log stream.
-	stdout := td.NewLogStream(ctx, "stdout", td.Info)
+	stdout := td.NewLogStream(ctx, "stdout", td.SeverityInfo)
 	for {
 		roll, err := manualRollDB.Get(ctx, rollId)
 		if err != nil {

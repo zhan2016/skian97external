@@ -13,6 +13,7 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPathBuilder.h"
+#include "include/core/SkPicture.h"
 #include "include/core/SkPixelRef.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkPoint3.h"
@@ -23,15 +24,17 @@
 #include "include/ports/SkTypeface_win.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkFloatingPoint.h"
-#include "src/core/SkFontMgrPriv.h"
 #include "src/core/SkFontPriv.h"
 #include "tools/ToolUtils.h"
-#include "tools/flags/CommandLineFlags.h"
-#include "tools/fonts/TestFontMgr.h"
 
 #include <cmath>
 #include <cstring>
-#include <memory>
+
+#if defined(SK_ENABLE_SVG)
+#include "modules/svg/include/SkSVGDOM.h"
+#include "modules/svg/include/SkSVGNode.h"
+#include "src/xml/SkDOM.h"
+#endif
 
 namespace ToolUtils {
 
@@ -55,6 +58,7 @@ const char* colortype_name(SkColorType ct) {
         case kRGB_565_SkColorType:            return "RGB_565";
         case kARGB_4444_SkColorType:          return "ARGB_4444";
         case kRGBA_8888_SkColorType:          return "RGBA_8888";
+        case kSRGBA_8888_SkColorType:         return "SRGBA_8888";
         case kRGB_888x_SkColorType:           return "RGB_888x";
         case kBGRA_8888_SkColorType:          return "BGRA_8888";
         case kRGBA_1010102_SkColorType:       return "RGBA_1010102";
@@ -83,6 +87,7 @@ const char* colortype_depth(SkColorType ct) {
         case kRGB_565_SkColorType:            return "565";
         case kARGB_4444_SkColorType:          return "4444";
         case kRGBA_8888_SkColorType:          return "8888";
+        case kSRGBA_8888_SkColorType:         return "8888";
         case kRGB_888x_SkColorType:           return "888";
         case kBGRA_8888_SkColorType:          return "8888";
         case kRGBA_1010102_SkColorType:       return "1010102";
@@ -130,7 +135,7 @@ sk_sp<SkShader> create_checkerboard_shader(SkColor c1, SkColor c2, int size) {
     bm.eraseColor(c1);
     bm.eraseArea(SkIRect::MakeLTRB(0, 0, size, size), c2);
     bm.eraseArea(SkIRect::MakeLTRB(size, size, 2 * size, 2 * size), c2);
-    return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat);
+    return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, SkSamplingOptions());
 }
 
 SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int checkSize) {
@@ -140,6 +145,12 @@ SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int ch
 
     ToolUtils::draw_checkerboard(&canvas, c1, c2, checkSize);
     return bitmap;
+}
+
+sk_sp<SkImage> create_checkerboard_image(int w, int h, SkColor c1, SkColor c2, int checkSize) {
+    auto surf = SkSurface::MakeRasterN32Premul(w, h);
+    ToolUtils::draw_checkerboard(surf->getCanvas(), c1, c2, checkSize);
+    return surf->makeImageSnapshot();
 }
 
 void draw_checkerboard(SkCanvas* canvas, SkColor c1, SkColor c2, int size) {
@@ -175,6 +186,11 @@ create_string_bitmap(int w, int h, SkColor c, int x, int y, int textSize, const 
     result.setInfo(SkImageInfo::MakeS32(w, h, kPremul_SkAlphaType));
     result.setPixelRef(sk_ref_sp(bitmap.pixelRef()), 0, 0);
     return result;
+}
+
+sk_sp<SkImage> create_string_image(int w, int h, SkColor c, int x, int y, int textSize,
+                                   const char* str) {
+    return create_string_bitmap(w, h, c, x, y, textSize, str).asImage();
 }
 
 void add_to_text_blob_w_len(SkTextBlobBuilder* builder,
@@ -246,7 +262,7 @@ SkPath make_star(const SkRect& bounds, int numPts, int step) {
         builder.lineTo(x, y);
     }
     SkPath path = builder.detach();
-    path.transform(SkMatrix::MakeRectToRect(path.getBounds(), bounds, SkMatrix::kFill_ScaleToFit));
+    path.transform(SkMatrix::RectToRect(path.getBounds(), bounds));
     return path;
 }
 
@@ -358,17 +374,6 @@ void create_tetra_normal_map(SkBitmap* bm, const SkIRect& dst) {
     }
 }
 
-#if !defined(__clang__) && defined(_MSC_VER)
-// MSVC takes ~2 minutes to compile this function with optimization.
-// We don't really care to wait that long for this function.
-#pragma optimize("", off)
-#endif
-SkPath make_big_path() {
-    SkPathBuilder path;
-#include "BigPathBench.inc"  // IWYU pragma: keep
-    return path.detach();
-}
-
 bool copy_to(SkBitmap* dst, SkColorType dstColorType, const SkBitmap& src) {
     SkPixmap srcPM;
     if (!src.peekPixels(&srcPM)) {
@@ -470,23 +475,44 @@ sk_sp<SkSurface> makeSurface(SkCanvas*             canvas,
     return surf;
 }
 
-static DEFINE_bool(nativeFonts, true,
-                   "If true, use native font manager and rendering. "
-                   "If false, fonts will draw as portably as possible.");
-#if defined(SK_BUILD_FOR_WIN)
-    static DEFINE_bool(gdi, false,
-                       "Use GDI instead of DirectWrite for font rendering.");
-#endif
+void sniff_paths(const char filepath[], std::function<PathSniffCallback> callback) {
+    SkFILEStream stream(filepath);
+    if (!stream.isValid()) {
+        SkDebugf("sniff_paths: invalid input file at \"%s\"\n", filepath);
+        return;
+    }
 
-void SetDefaultFontMgr() {
-    if (!FLAGS_nativeFonts) {
-        gSkFontMgr_DefaultFactory = &ToolUtils::MakePortableFontMgr;
-    }
-#if defined(SK_BUILD_FOR_WIN)
-    if (FLAGS_gdi) {
-        gSkFontMgr_DefaultFactory = &SkFontMgr_New_GDI;
-    }
+    class PathSniffer : public SkCanvas {
+    public:
+        PathSniffer(std::function<PathSniffCallback> callback)
+                : SkCanvas(4096, 4096, nullptr)
+                , fPathSniffCallback(callback) {}
+    private:
+        void onDrawPath(const SkPath& path, const SkPaint& paint) override {
+            fPathSniffCallback(this->getTotalMatrix(), path, paint);
+        }
+        std::function<PathSniffCallback> fPathSniffCallback;
+    };
+
+    PathSniffer pathSniffer(callback);
+    if (const char* ext = strrchr(filepath, '.'); ext && !strcmp(ext, ".svg")) {
+#if defined(SK_ENABLE_SVG)
+        sk_sp<SkSVGDOM> svg = SkSVGDOM::MakeFromStream(stream);
+        if (!svg) {
+            SkDebugf("sniff_paths: couldn't load svg at \"%s\"\n", filepath);
+            return;
+        }
+        svg->setContainerSize(SkSize::Make(pathSniffer.getBaseLayerSize()));
+        svg->render(&pathSniffer);
 #endif
+    } else {
+        sk_sp<SkPicture> skp = SkPicture::MakeFromStream(&stream);
+        if (!skp) {
+            SkDebugf("sniff_paths: couldn't load skp at \"%s\"\n", filepath);
+            return;
+        }
+        skp->playback(&pathSniffer);
+    }
 }
 
 }  // namespace ToolUtils

@@ -9,8 +9,8 @@
 #define SKSL_EXTERNALFUNCTIONCALL
 
 #include "include/private/SkTArray.h"
-#include "src/sksl/SkSLExternalValue.h"
 #include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLExternalFunction.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 
 namespace SkSL {
@@ -20,10 +20,10 @@ namespace SkSL {
  */
 class ExternalFunctionCall final : public Expression {
 public:
-    static constexpr Kind kExpressionKind = Kind::kExternalFunctionCall;
+    inline static constexpr Kind kExpressionKind = Kind::kExternalFunctionCall;
 
-    ExternalFunctionCall(int offset, const ExternalValue* function, ExpressionArray arguments)
-        : INHERITED(offset, kExpressionKind, &function->callReturnType())
+    ExternalFunctionCall(int line, const ExternalFunction* function, ExpressionArray arguments)
+        : INHERITED(line, kExpressionKind, &function->type())
         , fFunction(*function)
         , fArguments(std::move(arguments)) {}
 
@@ -35,7 +35,7 @@ public:
         return fArguments;
     }
 
-    const ExternalValue& function() const {
+    const ExternalFunction& function() const {
         return fFunction;
     }
 
@@ -57,7 +57,7 @@ public:
         for (const auto& arg : this->arguments()) {
             cloned.push_back(arg->clone());
         }
-        return std::make_unique<ExternalFunctionCall>(fOffset, &this->function(),
+        return std::make_unique<ExternalFunctionCall>(fLine, &this->function(),
                                                       std::move(cloned));
     }
 
@@ -74,7 +74,7 @@ public:
     }
 
 private:
-    const ExternalValue& fFunction;
+    const ExternalFunction& fFunction;
     ExpressionArray fArguments;
 
     using INHERITED = Expression;

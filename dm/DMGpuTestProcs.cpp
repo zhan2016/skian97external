@@ -9,6 +9,11 @@
 
 #include "include/gpu/GrDirectContext.h"
 
+#ifdef SK_GRAPHITE_ENABLED
+#include "experimental/graphite/include/Context.h"
+#include "tools/graphite/ContextFactory.h"
+#endif
+
 using sk_gpu_test::GrContextFactory;
 using sk_gpu_test::GLTestContext;
 using sk_gpu_test::ContextInfo;
@@ -32,10 +37,6 @@ bool IsDawnContextType(sk_gpu_test::GrContextFactory::ContextType type) {
 }
 bool IsRenderingGLContextType(sk_gpu_test::GrContextFactory::ContextType type) {
     return IsGLContextType(type) && GrContextFactory::IsRenderingContext(type);
-}
-bool IsRenderingGLOrMetalContextType(sk_gpu_test::GrContextFactory::ContextType type) {
-    return (IsGLContextType(type) || IsMetalContextType(type)) &&
-           GrContextFactory::IsRenderingContext(type);
 }
 bool IsMockContextType(sk_gpu_test::GrContextFactory::ContextType type) {
     return type == GrContextFactory::kMock_ContextType;
@@ -80,4 +81,24 @@ void RunWithGPUTestContexts(GrContextTestFn* test, GrContextTypeFilterFn* contex
         }
     }
 }
+
+#ifdef SK_GRAPHITE_ENABLED
+
+namespace graphite {
+
+void RunWithGraphiteTestContexts(GraphiteTestFn* test, Reporter* reporter) {
+    ContextFactory factory;
+
+    auto [_, context] = factory.getContextInfo(ContextFactory::ContextType::kMetal);
+    if (!context) {
+        return;
+    }
+
+    (*test)(reporter, context.get());
+}
+
+} // namespace graphite
+
+#endif // SK_GRAPHITE_ENABLED
+
 } // namespace skiatest

@@ -58,7 +58,7 @@ public:
     virtual void onAsyncRescaleAndReadPixels(const SkImageInfo&,
                                              const SkIRect& srcRect,
                                              RescaleGamma,
-                                             SkFilterQuality,
+                                             RescaleMode,
                                              ReadPixelsCallback,
                                              ReadPixelsContext);
     /**
@@ -69,7 +69,7 @@ public:
                                                    const SkIRect& srcRect,
                                                    const SkISize& dstSize,
                                                    RescaleGamma,
-                                                   SkFilterQuality,
+                                                   RescaleMode,
                                                    ReadPixelsCallback,
                                                    ReadPixelsContext);
 
@@ -82,7 +82,7 @@ public:
      *      image->unref();
      *  }
      */
-    virtual void onDraw(SkCanvas*, SkScalar x, SkScalar y, const SkPaint*);
+    virtual void onDraw(SkCanvas*, SkScalar x, SkScalar y, const SkSamplingOptions&,const SkPaint*);
 
     /**
      * Called as a performance hint when the Surface is allowed to make it's contents
@@ -94,8 +94,10 @@ public:
      *  If the surface is about to change, we call this so that our subclass
      *  can optionally fork their backend (copy-on-write) in case it was
      *  being shared with the cachedImage.
+     *
+     *  Returns false if the backing cannot be un-shared.
      */
-    virtual void onCopyOnWrite(ContentChangeMode) = 0;
+    virtual bool SK_WARN_UNUSED_RESULT onCopyOnWrite(ContentChangeMode) = 0;
 
     /**
      *  Signal the surface to remind its backing store that it's mutable again.
@@ -125,7 +127,7 @@ public:
 
     virtual bool onCharacterize(SkSurfaceCharacterization*) const { return false; }
     virtual bool onIsCompatible(const SkSurfaceCharacterization&) const { return false; }
-    virtual bool onDraw(sk_sp<const SkDeferredDisplayList>, int xOffset, int yOffset) {
+    virtual bool onDraw(sk_sp<const SkDeferredDisplayList>, SkIPoint offset) {
         return false;
     }
 
@@ -141,7 +143,8 @@ private:
     std::unique_ptr<SkCanvas>   fCachedCanvas;
     sk_sp<SkImage>              fCachedImage;
 
-    void aboutToDraw(ContentChangeMode mode);
+    // Returns false if drawing should not take place (allocation failure).
+    bool SK_WARN_UNUSED_RESULT aboutToDraw(ContentChangeMode mode);
 
     // Returns true if there is an outstanding image-snapshot, indicating that a call to aboutToDraw
     // would trigger a copy-on-write.

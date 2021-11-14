@@ -8,9 +8,8 @@
 #ifndef SKSL_FIELD
 #define SKSL_FIELD
 
-#include "src/sksl/SkSLPosition.h"
-#include "src/sksl/ir/SkSLModifiers.h"
-#include "src/sksl/ir/SkSLSymbol.h"
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLSymbol.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVariable.h"
 
@@ -23,10 +22,10 @@ namespace SkSL {
  */
 class Field final : public Symbol {
 public:
-    static constexpr Kind kSymbolKind = Kind::kField;
+    inline static constexpr Kind kSymbolKind = Kind::kField;
 
-    Field(int offset, const Variable* owner, int fieldIndex)
-        : INHERITED(offset, kSymbolKind, owner->type().fields()[fieldIndex].fName,
+    Field(int line, const Variable* owner, int fieldIndex)
+        : INHERITED(line, kSymbolKind, owner->type().fields()[fieldIndex].fName,
                     owner->type().fields()[fieldIndex].fType)
         , fOwner(owner)
         , fFieldIndex(fieldIndex) {}

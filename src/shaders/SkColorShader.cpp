@@ -42,7 +42,7 @@ SkShader::GradientType SkColorShader::asAGradient(GradientInfo* info) const {
 
 SkColor4Shader::SkColor4Shader(const SkColor4f& color, sk_sp<SkColorSpace> space)
     : fColorSpace(std::move(space))
-    , fColor(color)
+    , fColor({color.fR, color.fG, color.fB, SkTPin(color.fA, 0.0f, 1.0f)})
 {}
 
 sk_sp<SkFlattenable> SkColor4Shader::CreateProc(SkReadBuffer& buffer) {
@@ -93,9 +93,8 @@ bool SkColor4Shader::onAppendStages(const SkStageRec& rec) const {
 
 skvm::Color SkColorShader::onProgram(skvm::Builder* p,
                                      skvm::Coord /*device*/, skvm::Coord /*local*/,
-                                     skvm::Color /*paint*/,
-                                     const SkMatrixProvider&, const SkMatrix* /*localM*/,
-                                     SkFilterQuality /*quality*/, const SkColorInfo& dst,
+                                     skvm::Color /*paint*/, const SkMatrixProvider&,
+                                     const SkMatrix* /*localM*/, const SkColorInfo& dst,
                                      skvm::Uniforms* uniforms, SkArenaAlloc*) const {
     SkColor4f color = SkColor4f::FromColor(fColor);
     SkColorSpaceXformSteps(sk_srgb_singleton(), kUnpremul_SkAlphaType,
@@ -104,9 +103,8 @@ skvm::Color SkColorShader::onProgram(skvm::Builder* p,
 }
 skvm::Color SkColor4Shader::onProgram(skvm::Builder* p,
                                       skvm::Coord /*device*/, skvm::Coord /*local*/,
-                                      skvm::Color /*paint*/,
-                                      const SkMatrixProvider&, const SkMatrix* /*localM*/,
-                                      SkFilterQuality /*quality*/, const SkColorInfo& dst,
+                                      skvm::Color /*paint*/, const SkMatrixProvider&,
+                                      const SkMatrix* /*localM*/, const SkColorInfo& dst,
                                       skvm::Uniforms* uniforms, SkArenaAlloc*) const {
     SkColor4f color = fColor;
     SkColorSpaceXformSteps(fColorSpace.get(), kUnpremul_SkAlphaType,

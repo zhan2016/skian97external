@@ -28,13 +28,13 @@
 #include "src/core/SkMaskGamma.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/core/SkTypefaceCache.h"
-#include "src/core/SkUtils.h"
 #include "src/sfnt/SkOTTable_OS_2.h"
 #include "src/sfnt/SkOTTable_maxp.h"
 #include "src/sfnt/SkOTTable_name.h"
 #include "src/sfnt/SkOTUtils.h"
 #include "src/sfnt/SkSFNTHeader.h"
 #include "src/utils/SkMatrix22.h"
+#include "src/utils/SkUTF.h"
 #include "src/utils/win/SkHRESULT.h"
 
 #include <tchar.h>
@@ -274,8 +274,8 @@ public:
 protected:
     std::unique_ptr<SkStreamAsset> onOpenStream(int* ttcIndex) const override;
     sk_sp<SkTypeface> onMakeClone(const SkFontArguments& args) const override;
-    SkScalerContext* onCreateScalerContext(const SkScalerContextEffects&,
-                                           const SkDescriptor*) const override;
+    std::unique_ptr<SkScalerContext> onCreateScalerContext(const SkScalerContextEffects&,
+                                                           const SkDescriptor*) const override;
     void onFilterRec(SkScalerContextRec*) const override;
     void getGlyphToUnicodeMap(SkUnichar*) const override;
     std::unique_ptr<SkAdvancedTypefaceMetrics> onGetAdvancedMetrics() const override;
@@ -287,6 +287,7 @@ protected:
     void onGetFamilyName(SkString* familyName) const override;
     bool onGetPostScriptName(SkString*) const override { return false; }
     SkTypeface::LocalizedStrings* onCreateFamilyNameIterator() const override;
+    bool onGlyphMaskNeedsCurrentColor() const override { return false; }
     int onGetVariationDesignPosition(SkFontArguments::VariationPosition::Coordinate coordinates[],
                                      int coordinateCount) const override
     {
@@ -563,7 +564,6 @@ public:
     bool isValid() const;
 
 protected:
-    unsigned generateGlyphCount() override;
     bool generateAdvance(SkGlyph* glyph) override;
     void generateMetrics(SkGlyph* glyph) override;
     void generateImage(const SkGlyph& glyph) override;
@@ -594,7 +594,6 @@ private:
     HFONT        fSavefont;
     HFONT        fFont;
     SCRIPT_CACHE fSC;
-    int          fGlyphCount;
 
     /** The total matrix which also removes EM scale. */
     SkMatrix     fHiResMatrix;
@@ -639,7 +638,6 @@ SkScalerContext_GDI::SkScalerContext_GDI(sk_sp<LogFontTypeface> rawTypeface,
         , fSavefont(0)
         , fFont(0)
         , fSC(0)
-        , fGlyphCount(-1)
 {
     LogFontTypeface* typeface = static_cast<LogFontTypeface*>(this->getTypeface());
 
@@ -798,14 +796,6 @@ SkScalerContext_GDI::~SkScalerContext_GDI() {
 
 bool SkScalerContext_GDI::isValid() const {
     return fDDC && fFont;
-}
-
-unsigned SkScalerContext_GDI::generateGlyphCount() {
-    if (fGlyphCount < 0) {
-        fGlyphCount = calculateGlyphCount(
-                          fDDC, static_cast<const LogFontTypeface*>(this->getTypeface())->fLogFont);
-    }
-    return fGlyphCount;
 }
 
 bool SkScalerContext_GDI::generateAdvance(SkGlyph* glyph) {
@@ -1570,11 +1560,10 @@ bool SkScalerContext_GDI::generatePath(SkGlyphID glyph, SkPath* path) {
         SkGDIGeometrySink sink(path);
         sink.process(glyphbuf, total_size);
     } else {
-        //GDI only uses hinted outlines when axis aligned.
-        UINT format = GGO_NATIVE | GGO_GLYPH_INDEX;
-
         SkAutoSTMalloc<BUFFERSIZE, uint8_t> hintedGlyphbuf(BUFFERSIZE);
-        DWORD hinted_total_size = getGDIGlyphPath(glyph, format, &hintedGlyphbuf);
+        //GDI only uses hinted outlines when axis aligned.
+        DWORD hinted_total_size = getGDIGlyphPath(glyph, GGO_NATIVE | GGO_GLYPH_INDEX,
+                                                  &hintedGlyphbuf);
         if (0 == hinted_total_size) {
             return false;
         }
@@ -1733,7 +1722,7 @@ std::unique_ptr<SkAdvancedTypefaceMetrics> LogFontTypeface::onGetAdvancedMetrics
     return info;
 }
 
-//Dummy representation of a Base64 encoded GUID from create_unique_font_name.
+//Placeholder representation of a Base64 encoded GUID from create_unique_font_name.
 #define BASE64_GUID_ID "XXXXXXXXXXXXXXXXXXXXXXXX"
 //Length of GUID representation from create_id, including nullptr terminator.
 #define BASE64_GUID_ID_LEN SK_ARRAY_COUNT(BASE64_GUID_ID)
@@ -2083,21 +2072,25 @@ sk_sp<SkData> LogFontTypeface::onCopyTableData(SkFontTableTag tag) const {
     return data;
 }
 
-SkScalerContext* LogFontTypeface::onCreateScalerContext(const SkScalerContextEffects& effects,
-                                                        const SkDescriptor* desc) const {
+std::unique_ptr<SkScalerContext> LogFontTypeface::onCreateScalerContext(
+    const SkScalerContextEffects& effects, const SkDescriptor* desc) const
+{
     auto ctx = std::make_unique<SkScalerContext_GDI>(
             sk_ref_sp(const_cast<LogFontTypeface*>(this)), effects, desc);
-    if (!ctx->isValid()) {
-        ctx.reset();
-        SkStrikeCache::PurgeAll();
-        ctx = std::make_unique<SkScalerContext_GDI>(
-            sk_ref_sp(const_cast<LogFontTypeface*>(this)), effects, desc);
-        if (!ctx->isValid()) {
-            return SkScalerContext::MakeEmptyContext(
-                    sk_ref_sp(const_cast<LogFontTypeface*>(this)), effects, desc);
-        }
+    if (ctx->isValid()) {
+        return std::move(ctx);
     }
-    return ctx.release();
+
+    ctx.reset();
+    SkStrikeCache::PurgeAll();
+    ctx = std::make_unique<SkScalerContext_GDI>(
+            sk_ref_sp(const_cast<LogFontTypeface*>(this)), effects, desc);
+    if (ctx->isValid()) {
+        return std::move(ctx);
+    }
+
+    return SkScalerContext::MakeEmpty(
+            sk_ref_sp(const_cast<LogFontTypeface*>(this)), effects, desc);
 }
 
 void LogFontTypeface::onFilterRec(SkScalerContextRec* rec) const {
@@ -2276,14 +2269,6 @@ protected:
                                                     const char* bcp47[], int bcp47Count,
                                                     SkUnichar character) const override {
         return nullptr;
-    }
-
-    virtual SkTypeface* onMatchFaceStyle(const SkTypeface* familyMember,
-                                         const SkFontStyle& fontstyle) const override {
-        // could be in base impl
-        SkString familyName;
-        ((LogFontTypeface*)familyMember)->getFamilyName(&familyName);
-        return this->matchFamilyStyle(familyName.c_str(), fontstyle);
     }
 
     sk_sp<SkTypeface> onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset> stream,

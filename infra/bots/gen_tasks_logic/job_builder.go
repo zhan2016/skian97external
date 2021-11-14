@@ -5,6 +5,7 @@ package gen_tasks_logic
 
 import (
 	"log"
+	"strings"
 
 	"go.skia.org/infra/task_scheduler/go/specs"
 )
@@ -82,8 +83,9 @@ func (b *jobBuilder) genTasksForJob() {
 		b.bundleRecipes()
 		return
 	}
-	if b.Name == BUILD_TASK_DRIVERS_NAME {
-		b.buildTaskDrivers()
+	if strings.HasPrefix(b.Name, BUILD_TASK_DRIVERS_PREFIX) {
+		parts := strings.Split(b.Name, "_")
+		b.buildTaskDrivers(parts[1], parts[2])
 		return
 	}
 
@@ -212,13 +214,6 @@ func (b *jobBuilder) genTasksForJob() {
 		return
 	}
 
-	// Fuzz bots (aka CIFuzz). See
-	// https://google.github.io/oss-fuzz/getting-started/continuous-integration/ for more.
-	if b.role("Fuzz") {
-		b.cifuzz()
-		return
-	}
-
 	log.Fatalf("Don't know how to handle job %q", b.Name)
 }
 
@@ -228,8 +223,8 @@ func (b *jobBuilder) finish() {
 		b.trigger(specs.TRIGGER_NIGHTLY)
 	} else if b.frequency("Weekly") {
 		b.trigger(specs.TRIGGER_WEEKLY)
-	} else if b.extraConfig("Flutter", "CommandBuffer") {
-		b.trigger(specs.TRIGGER_MASTER_ONLY)
+	} else if b.extraConfig("Flutter", "CommandBuffer", "CreateDockerImage") {
+		b.trigger(specs.TRIGGER_MAIN_ONLY)
 	} else if b.frequency("OnDemand") || b.role("Canary") {
 		b.trigger(specs.TRIGGER_ON_DEMAND)
 	} else {

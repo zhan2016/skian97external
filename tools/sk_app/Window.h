@@ -16,11 +16,17 @@
 #include "tools/skui/Key.h"
 #include "tools/skui/ModifierKey.h"
 
+#include <functional>
+
 class GrDirectContext;
 class SkCanvas;
 class SkSurface;
 class SkSurfaceProps;
 class SkString;
+
+namespace skgpu {
+class Context;
+}
 
 namespace sk_app {
 
@@ -64,6 +70,9 @@ public:
 #endif
 #ifdef SK_METAL
         kMetal_BackendType,
+#ifdef SK_GRAPHITE_ENABLED
+        kGraphiteMetal_BackendType,
+#endif
 #endif
 #ifdef SK_DIRECT3D
         kDirect3D_BackendType,
@@ -127,9 +136,11 @@ public:
     void onUIStateChanged(const SkString& stateName, const SkString& stateValue);
     void onPaint();
     void onResize(int width, int height);
+    void onActivate(bool isActive);
 
     int width() const;
     int height() const;
+    virtual float scaleFactor() const { return 1.0f; }
 
     virtual const DisplayParams& getRequestedDisplayParams() { return fRequestedDisplayParams; }
     virtual void setRequestedDisplayParams(const DisplayParams&, bool allowReattach = true);
@@ -140,12 +151,14 @@ public:
 
     // Returns null if there is not a GPU backend or if the backend is not yet created.
     GrDirectContext* directContext() const;
+    skgpu::Context* graphiteContext() const;
 
 protected:
     Window();
 
     SkTDArray<Layer*>      fLayers;
     DisplayParams          fRequestedDisplayParams;
+    bool                   fIsActive = true;
 
     std::unique_ptr<WindowContext> fWindowContext;
 

@@ -8,8 +8,11 @@
 #ifndef GrContextThreadSafeProxy_DEFINED
 #define GrContextThreadSafeProxy_DEFINED
 
-#include "include/core/SkImageInfo.h"
 #include "include/core/SkRefCnt.h"
+
+#if SK_SUPPORT_GPU
+
+#include "include/core/SkImageInfo.h"
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrTypes.h"
 
@@ -20,6 +23,7 @@ class GrCaps;
 class GrContextThreadSafeProxyPriv;
 class GrTextBlobCache;
 class GrThreadSafeCache;
+class GrThreadSafePipelineBuilder;
 class SkSurfaceCharacterization;
 class SkSurfaceProps;
 
@@ -101,6 +105,15 @@ public:
      */
     GrBackendFormat defaultBackendFormat(SkColorType ct, GrRenderable renderable) const;
 
+    /**
+     * Retrieve the GrBackendFormat for a given SkImage::CompressionType. This is
+     * guaranteed to match the backend format used by the following
+     * createCompressedBackendTexture methods that take a CompressionType.
+     *
+     * The caller should check that the returned format is valid.
+     */
+    GrBackendFormat compressedBackendFormat(SkImage::CompressionType c) const;
+
     bool isValid() const { return nullptr != fCaps; }
 
     bool operator==(const GrContextThreadSafeProxy& that) const {
@@ -127,15 +140,20 @@ private:
     // TODO: This should be part of the constructor but right now we have a chicken-and-egg problem
     // with GrContext where we get the caps by creating a GPU which requires a context (see the
     // `init` method on GrContext_Base).
-    void init(sk_sp<const GrCaps>);
+    void init(sk_sp<const GrCaps>, sk_sp<GrThreadSafePipelineBuilder>);
 
-    const GrBackendApi                 fBackend;
-    const GrContextOptions             fOptions;
-    const uint32_t                     fContextID;
-    sk_sp<const GrCaps>                fCaps;
-    std::unique_ptr<GrTextBlobCache>   fTextBlobCache;
-    std::unique_ptr<GrThreadSafeCache> fThreadSafeCache;
-    std::atomic<bool>                  fAbandoned{false};
+    const GrBackendApi                      fBackend;
+    const GrContextOptions                  fOptions;
+    const uint32_t                          fContextID;
+    sk_sp<const GrCaps>                     fCaps;
+    std::unique_ptr<GrTextBlobCache>        fTextBlobCache;
+    std::unique_ptr<GrThreadSafeCache>      fThreadSafeCache;
+    sk_sp<GrThreadSafePipelineBuilder>      fPipelineBuilder;
+    std::atomic<bool>                       fAbandoned{false};
 };
+
+#else // !SK_SUPPORT_GPU
+class SK_API GrContextThreadSafeProxy final : public SkNVRefCnt<GrContextThreadSafeProxy> {};
+#endif
 
 #endif

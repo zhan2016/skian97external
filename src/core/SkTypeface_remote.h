@@ -28,7 +28,6 @@ public:
                          sk_sp<SkStrikeClient::DiscardableHandleManager> manager);
 
 protected:
-    unsigned generateGlyphCount() override;
     bool generateAdvance(SkGlyph* glyph) override;
     void generateMetrics(SkGlyph* glyph) override;
     void generateImage(const SkGlyph& glyph) override;
@@ -47,12 +46,14 @@ public:
                     int glyphCount,
                     const SkFontStyle& style,
                     bool isFixed,
+                    bool glyphMaskNeedsCurrentColor,
                     sk_sp<SkStrikeClient::DiscardableHandleManager> manager,
                     bool isLogging = true)
             : INHERITED{style, false}
             , fFontId{fontId}
             , fGlyphCount{glyphCount}
             , fIsLogging{isLogging}
+            , fGlyphMaskNeedsCurrentColor(glyphMaskNeedsCurrentColor)
             , fDiscardableManager{std::move(manager)} {}
     SkFontID remoteTypefaceID() const {return fFontId;}
     int glyphCount() const {return fGlyphCount;}
@@ -65,6 +66,9 @@ protected:
     }
     sk_sp<SkTypeface> onMakeClone(const SkFontArguments& args) const override {
         SK_ABORT("Should never be called.");
+    }
+    bool onGlyphMaskNeedsCurrentColor() const override {
+        return fGlyphMaskNeedsCurrentColor;
     }
     int onGetVariationDesignPosition(SkFontArguments::VariationPosition::Coordinate coordinates[],
                                      int coordinateCount) const override {
@@ -90,10 +94,11 @@ protected:
     size_t onGetTableData(SkFontTableTag, size_t offset, size_t length, void* data) const override {
         SK_ABORT("Should never be called.");
     }
-    SkScalerContext* onCreateScalerContext(const SkScalerContextEffects& effects,
-                                           const SkDescriptor* desc) const override {
-        return new SkScalerContextProxy(sk_ref_sp(const_cast<SkTypefaceProxy*>(this)), effects,
-                                        desc, fDiscardableManager);
+    std::unique_ptr<SkScalerContext> onCreateScalerContext(
+        const SkScalerContextEffects& effects, const SkDescriptor* desc) const override
+    {
+        return std::make_unique<SkScalerContextProxy>(
+                sk_ref_sp(const_cast<SkTypefaceProxy*>(this)), effects, desc, fDiscardableManager);
     }
     void onFilterRec(SkScalerContextRec* rec) const override {
         // The rec filtering is already applied by the server when generating
@@ -128,6 +133,7 @@ private:
     const SkFontID                                  fFontId;
     const int                                       fGlyphCount;
     const bool                                      fIsLogging;
+    const bool                                      fGlyphMaskNeedsCurrentColor;
     sk_sp<SkStrikeClient::DiscardableHandleManager> fDiscardableManager;
 
 

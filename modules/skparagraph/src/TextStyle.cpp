@@ -6,6 +6,8 @@
 namespace skia {
 namespace textlayout {
 
+const std::vector<SkString> TextStyle::kDefaultFontFamilies = { SkString(DEFAULT_FONT_FAMILY) };
+
 TextStyle::TextStyle(const TextStyle& other, bool placeholder) {
     fColor = other.fColor;
     fFontSize = other.fFontSize;
@@ -18,6 +20,8 @@ TextStyle::TextStyle(const TextStyle& other, bool placeholder) {
     fHeightOverride = other.fHeightOverride;
     fIsPlaceholder = placeholder;
     fFontFeatures = other.fFontFeatures;
+    fHalfLeading = other.fHalfLeading;
+    fBaselineShift = other.fBaselineShift;
 }
 
 bool TextStyle::equals(const TextStyle& other) const {
@@ -45,6 +49,12 @@ bool TextStyle::equals(const TextStyle& other) const {
         return false;
     }
     if (fHeight != other.fHeight) {
+        return false;
+    }
+    if (fHalfLeading != other.fHalfLeading) {
+        return false;
+    }
+    if (fBaselineShift != other.fBaselineShift) {
         return false;
     }
     if (fFontSize != other.fFontSize) {
@@ -88,6 +98,7 @@ bool TextStyle::equalsByFonts(const TextStyle& that) const {
            nearlyEqual(fLetterSpacing, that.fLetterSpacing) &&
            nearlyEqual(fWordSpacing, that.fWordSpacing) &&
            nearlyEqual(fHeight, that.fHeight) &&
+           nearlyEqual(fBaselineShift, that.fBaselineShift) &&
            nearlyEqual(fFontSize, that.fFontSize) &&
            fLocale == that.fLocale;
 }
@@ -132,7 +143,10 @@ bool TextStyle::matchOneAttribute(StyleType styleType, const TextStyle& other) c
                    fLocale == other.fLocale &&
                    fFontFamilies == other.fFontFamilies &&
                    fFontSize == other.fFontSize &&
-                   fHeight == other.fHeight;
+                   fHeight == other.fHeight &&
+                   fHeight == other.fHeight &&
+                   fHalfLeading == other.fHalfLeading &&
+                   fBaselineShift == other.fBaselineShift;
         default:
             SkASSERT(false);
             return false;
@@ -155,6 +169,9 @@ void TextStyle::getFontMetrics(SkFontMetrics* metrics) const {
         metrics->fAscent = (metrics->fAscent - metrics->fLeading / 2);
         metrics->fDescent = (metrics->fDescent + metrics->fLeading / 2);
     }
+    // If we shift the baseline we need to make sure the shifted text fits the line
+    metrics->fAscent += fBaselineShift;
+    metrics->fDescent += fBaselineShift;
 }
 
 bool PlaceholderStyle::equals(const PlaceholderStyle& other) const {

@@ -8,6 +8,7 @@
 #ifndef GrSamplerState_DEFINED
 #define GrSamplerState_DEFINED
 
+#include "include/core/SkSamplingOptions.h"
 #include "include/gpu/GrTypes.h"
 #include <limits>
 
@@ -16,8 +17,8 @@
  */
 class GrSamplerState {
 public:
-    enum class Filter     : uint8_t { kNearest, kLinear, kLast = kLinear };
-    enum class MipmapMode : uint8_t { kNone, kNearest, kLinear, kLast = kLinear };
+    using Filter = SkFilterMode;
+    using MipmapMode = SkMipmapMode;
 
     enum class WrapMode : uint8_t {
         kClamp,
@@ -27,8 +28,8 @@ public:
         kLast = kClampToBorder
     };
 
-    static constexpr int kFilterCount = static_cast<int>(Filter::kLast) + 1;
-    static constexpr int kWrapModeCount = static_cast<int>(WrapMode::kLast) + 1;
+    inline static constexpr int kFilterCount = static_cast<int>(Filter::kLast) + 1;
+    inline static constexpr int kWrapModeCount = static_cast<int>(WrapMode::kLast) + 1;
 
     constexpr GrSamplerState() = default;
 
@@ -107,10 +108,10 @@ public:
         return static_cast<uint8_t>(result);
     }
 
-    static constexpr int kNumUniqueSamplers = (static_cast<int>(WrapMode::kLast  ) + 1)
-                                            * (static_cast<int>(WrapMode::kLast  ) + 1)
-                                            * (static_cast<int>(Filter::kLast    ) + 1)
-                                            * (static_cast<int>(MipmapMode::kLast) + 1);
+    inline static constexpr int kNumUniqueSamplers = (static_cast<int>(WrapMode::kLast  ) + 1)
+                                                   * (static_cast<int>(WrapMode::kLast  ) + 1)
+                                                   * (static_cast<int>(Filter::kLast    ) + 1)
+                                                   * (static_cast<int>(MipmapMode::kLast) + 1);
 private:
     WrapMode fWrapModes[2] = {WrapMode::kClamp, WrapMode::kClamp};
     Filter fFilter = GrSamplerState::Filter::kNearest;

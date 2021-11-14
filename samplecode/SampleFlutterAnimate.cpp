@@ -33,7 +33,6 @@ protected:
     void onDrawContent(SkCanvas* canvas) override {
         SkFont font(fTypeface, 50);
         SkPaint paint;
-        paint.setFilterQuality(kMedium_SkFilterQuality);
 
         // rough center of each glyph
         static constexpr auto kMidX = 35;
@@ -75,7 +74,7 @@ private:
         }
     }
 
-    static constexpr double kDuration = 5.0;
+    inline static constexpr double kDuration = 5.0;
     double fCurrTime;
     double fResetTime;
     SkRandom fRand;
@@ -87,7 +86,7 @@ private:
         SkScalar fEndRotation;
     };
     sk_sp<SkTypeface> fTypeface;
-    static constexpr int kNumChars = 40;
+    inline static constexpr int kNumChars = 40;
     AnimatedChar fChars[kNumChars];
 
     using INHERITED = Sample;

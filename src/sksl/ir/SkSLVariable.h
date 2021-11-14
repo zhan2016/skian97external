@@ -8,15 +8,21 @@
 #ifndef SKSL_VARIABLE
 #define SKSL_VARIABLE
 
-#include "src/sksl/SkSLPosition.h"
-#include "src/sksl/ir/SkSLModifiers.h"
-#include "src/sksl/ir/SkSLSymbol.h"
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLSymbol.h"
+#include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 
 namespace SkSL {
 
 class Expression;
+class VarDeclaration;
+
+namespace dsl {
+class DSLCore;
+class DSLFunction;
+} // namespace dsl
 
 enum class VariableStorage : int8_t {
     kGlobal,
@@ -34,22 +40,45 @@ class Variable final : public Symbol {
 public:
     using Storage = VariableStorage;
 
-    static constexpr Kind kSymbolKind = Kind::kVariable;
+    inline static constexpr Kind kSymbolKind = Kind::kVariable;
 
-    Variable(int offset, ModifiersPool::Handle modifiers, StringFragment name, const Type* type,
-             bool builtin, Storage storage, const Expression* initialValue = nullptr)
-    : INHERITED(offset, kSymbolKind, name, type)
-    , fInitialValue(initialValue)
-    , fModifiersHandle(modifiers)
+    Variable(int line, const Modifiers* modifiers, skstd::string_view name, const Type* type,
+             bool builtin, Storage storage)
+    : INHERITED(line, kSymbolKind, name, type)
+    , fModifiers(modifiers)
     , fStorage(storage)
     , fBuiltin(builtin) {}
 
+    ~Variable() override;
+
+    static std::unique_ptr<Variable> Convert(const Context& context, int line,
+            const Modifiers& modifiers, const Type* baseType, skstd::string_view name, bool isArray,
+            std::unique_ptr<Expression> arraySize, Variable::Storage storage);
+
+    static std::unique_ptr<Variable> Make(const Context& context, int line,
+            const Modifiers& modifiers, const Type* baseType, skstd::string_view name, bool isArray,
+            std::unique_ptr<Expression> arraySize, Variable::Storage storage);
+
+    /**
+     * Creates a local scratch variable and the associated VarDeclaration statement.
+     * Useful when doing IR rewrites, e.g. inlining a function call.
+     */
+    struct ScratchVariable {
+        const Variable* fVarSymbol;
+        std::unique_ptr<Statement> fVarDecl;
+    };
+    static ScratchVariable MakeScratchVariable(const Context& context,
+                                               skstd::string_view baseName,
+                                               const Type* type,
+                                               const Modifiers& modifiers,
+                                               SymbolTable* symbolTable,
+                                               std::unique_ptr<Expression> initialValue);
     const Modifiers& modifiers() const {
-        return *fModifiersHandle;
+        return *fModifiers;
     }
 
-    const ModifiersPool::Handle& modifiersHandle() const {
-        return fModifiersHandle;
+    void setModifiers(const Modifiers* modifiers) {
+        fModifiers = modifiers;
     }
 
     bool isBuiltin() const {
@@ -60,13 +89,17 @@ public:
         return (Storage) fStorage;
     }
 
-    const Expression* initialValue() const {
-        return fInitialValue;
+    const Expression* initialValue() const;
+
+    void setDeclaration(VarDeclaration* declaration) {
+        SkASSERT(!fDeclaration);
+        fDeclaration = declaration;
     }
 
-    void setInitialValue(const Expression* initialValue) {
-        SkASSERT(!this->initialValue());
-        fInitialValue = initialValue;
+    void detachDeadVarDeclaration() const {
+        // The VarDeclaration is being deleted, so our reference to it has become stale.
+        // This variable is now dead, so it shouldn't matter that we are modifying its symbol.
+        const_cast<Variable*>(this)->fDeclaration = nullptr;
     }
 
     String description() const override {
@@ -74,13 +107,15 @@ public:
     }
 
 private:
-    const Expression* fInitialValue = nullptr;
-    ModifiersPool::Handle fModifiersHandle;
+    VarDeclaration* fDeclaration = nullptr;
+    const Modifiers* fModifiers;
     VariableStorage fStorage;
     bool fBuiltin;
 
     using INHERITED = Symbol;
 
+    friend class dsl::DSLCore;
+    friend class dsl::DSLFunction;
     friend class VariableReference;
 };
 

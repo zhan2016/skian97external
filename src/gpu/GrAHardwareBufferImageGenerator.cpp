@@ -100,17 +100,6 @@ GrSurfaceProxyView GrAHardwareBufferImageGenerator::makeView(GrRecordingContext*
     int width = this->getInfo().width();
     int height = this->getInfo().height();
 
-    GrTextureType textureType = GrTextureType::k2D;
-    if (context->backend() == GrBackendApi::kOpenGL) {
-        textureType = GrTextureType::kExternal;
-    } else if (context->backend() == GrBackendApi::kVulkan) {
-        VkFormat format;
-        SkAssertResult(backendFormat.asVkFormat(&format));
-        if (format == VK_FORMAT_UNDEFINED) {
-            textureType = GrTextureType::kExternal;
-        }
-    }
-
     auto proxyProvider = context->priv().proxyProvider();
 
     AHardwareBuffer* hardwareBuffer = fHardwareBuffer;
@@ -163,8 +152,14 @@ GrSurfaceProxyView GrAHardwareBufferImageGenerator::makeView(GrRecordingContext*
                 SkASSERT(deleteImageProc && texImageCtx);
 
                 // We make this texture cacheable to avoid recreating a GrTexture every time this
-                // is invoked. We know the owning SkIamge will send an invalidation message when the
-                // image is destroyed, so the texture will be removed at that time.
+                // is invoked. We know the owning SkImage will send an invalidation message when the
+                // image is destroyed, so the texture will be removed at that time. Note that the
+                // proxy will be keyed in GrProxyProvider but that cache just allows extant proxies
+                // to be reused. It does not retain them. After a flush the proxy will be deleted
+                // and a subsequent use of the image will recreate a new proxy around the GrTexture
+                // found in the GrResourceCache.
+                // This is the last use of GrWrapCacheable::kYes so if we actually cached the proxy
+                // we could remove wrapped GrGpuResource caching.
                 sk_sp<GrTexture> tex = resourceProvider->wrapBackendTexture(
                         backendTex, kBorrow_GrWrapOwnership, GrWrapCacheable::kYes, kRead_GrIOType);
                 if (!tex) {

@@ -12,14 +12,14 @@
 #include <memory>
 #include "stdlib.h"
 #include "string.h"
-#include "src/sksl/SkSLDefines.h"
+#include "include/private/SkSLDefines.h"
 #include "src/sksl/SkSLLexer.h"
 
 #ifndef SKSL_STANDALONE
 #include "include/core/SkTypes.h"
-#include "include/private/GrTypesPriv.h"
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrContextOptions.h"
+#include "include/private/GrTypesPriv.h"
 #include "src/gpu/GrShaderCaps.h"
 #endif // SK_SUPPORT_GPU
 #endif // SKSL_STANDALONE
@@ -70,9 +70,9 @@ public:
         return fMustForceNegatedAtanParamToFloat;
     }
 
-    bool fGeometryShaderSupport = true;
-    bool geometryShaderSupport() const {
-        return fGeometryShaderSupport;
+    bool fMustForceNegatedLdexpParamToMultiply = false;
+    bool mustForceNegatedLdexpParamToMultiply() const {
+        return fMustForceNegatedLdexpParamToMultiply;
     }
 
     bool fShaderDerivativeSupport = true;
@@ -89,7 +89,7 @@ public:
         return fGLSLGeneration > k110_GrGLSLGeneration;
     }
 
-    bool fFBFetchSupport = true;
+    bool fFBFetchSupport = false;
     bool fbFetchSupport() const {
         return fFBFetchSupport;
     }
@@ -134,19 +134,9 @@ public:
         return fMustGuardDivisionEvenAfterExplicitZeroCheck;
     }
 
-    bool fInBlendModesFailRandomlyForAllZeroVec = false;
-    bool inBlendModesFailRandomlyForAllZeroVec() const {
-        return fInBlendModesFailRandomlyForAllZeroVec;
-    }
-
     bool fMustEnableAdvBlendEqs = false;
     bool mustEnableAdvBlendEqs() const {
         return fMustEnableAdvBlendEqs;
-    }
-
-    bool fMustEnableSpecificAdvBlendEqs = false;
-    bool mustEnableSpecificAdvBlendEqs() const {
-        return fMustEnableSpecificAdvBlendEqs;
     }
 
     bool fCanUseAnyFunctionInShader = true;
@@ -169,6 +159,16 @@ public:
         return fIntegerSupport;
     }
 
+    bool fNonsquareMatrixSupport = false;
+    bool nonsquareMatrixSupport() const {
+        return fNonsquareMatrixSupport;
+    }
+
+    bool fInverseHyperbolicSupport = false;
+    bool inverseHyperbolicSupport() const {
+        return fInverseHyperbolicSupport;
+    }
+
     bool fBuiltinFMASupport = false;
     bool builtinFMASupport() const {
         return fBuiltinFMASupport;
@@ -187,6 +187,11 @@ public:
         return fCanUseDoLoops;
     }
 
+    bool fUseNodePools = true;
+    bool useNodePools() const {
+        return fUseNodePools;
+    }
+
     const char* fShaderDerivativeExtensionString = nullptr;
     const char* shaderDerivativeExtensionString() const {
         return fShaderDerivativeExtensionString;
@@ -195,16 +200,6 @@ public:
     const char* fFragCoordConventionsExtensionString = nullptr;
     const char* fragCoordConventionsExtensionString() const {
         return fFragCoordConventionsExtensionString;
-    }
-
-    const char* fGeometryShaderExtensionString = nullptr;
-    const char* geometryShaderExtensionString() const {
-        return fGeometryShaderExtensionString;
-    }
-
-    const char* fGSInvocationsExtensionString = nullptr;
-    const char* gsInvocationsExtensionString() const {
-        return fGSInvocationsExtensionString;
     }
 
     const char* fExternalTextureExtensionString = nullptr;
@@ -220,11 +215,6 @@ public:
     const char* fVersionDeclString = "";
     const char* versionDeclString() const {
         return fVersionDeclString;
-    }
-
-    bool fGSInvocationsSupport = true;
-    bool gsInvocationsSupport() const {
-        return fGSInvocationsSupport;
     }
 
     bool fCanUseFractForNegativeValues = true;
@@ -262,6 +252,11 @@ public:
         return fRewriteDoWhileLoops;
     }
 
+    bool fRewriteSwitchStatements = false;
+    bool rewriteSwitchStatements() const {
+        return fRewriteSwitchStatements;
+    }
+
     bool fRemovePowWithConstantExponent = false;
     bool removePowWithConstantExponent() const {
         return fRemovePowWithConstantExponent;
@@ -271,16 +266,25 @@ public:
     const char* fbFetchColorName() const {
         return fFBFetchColorName;
     }
+
+    bool fRewriteMatrixVectorMultiply = false;
+    bool rewriteMatrixVectorMultiply() const {
+        return fRewriteMatrixVectorMultiply;
+    }
+
+    bool fRewriteMatrixComparisons = false;
+    bool rewriteMatrixComparisons() const {
+        return fRewriteMatrixComparisons;
+    }
 };
 
 using ShaderCapsClass = StandaloneShaderCaps;
-using ShaderCapsPointer = std::shared_ptr<StandaloneShaderCaps>;
-extern StandaloneShaderCaps standaloneCaps;
+using ShaderCapsPointer = std::unique_ptr<StandaloneShaderCaps>;
 
 #else
 
 using ShaderCapsClass = GrShaderCaps;
-using ShaderCapsPointer = sk_sp<GrShaderCaps>;
+using ShaderCapsPointer = std::unique_ptr<GrShaderCaps>;
 
 #endif  // defined(SKSL_STANDALONE) || !SK_SUPPORT_GPU
 
@@ -304,12 +308,6 @@ public:
         ShaderCapsPointer result = MakeShaderCaps();
         result->fVersionDeclString = "#version 400";
         result->fAddAndTrueToLoopCondition = true;
-        return result;
-    }
-
-    static ShaderCapsPointer BlendModesFailRandomlyForAllZeroVec() {
-        ShaderCapsPointer result = MakeShaderCaps();
-        result->fInBlendModesFailRandomlyForAllZeroVec = true;
         return result;
     }
 
@@ -341,43 +339,10 @@ public:
         return result;
     }
 
-    static ShaderCapsPointer FragCoordsNew() {
+    static ShaderCapsPointer FramebufferFetchSupport() {
         ShaderCapsPointer result = MakeShaderCaps();
-        result->fVersionDeclString = "#version 400";
-        result->fFragCoordConventionsExtensionString = "GL_ARB_fragment_coord_conventions";
-        return result;
-    }
-    static ShaderCapsPointer FragCoordsOld() {
-        ShaderCapsPointer result = MakeShaderCaps();
-        result->fVersionDeclString = "#version 110";
-        result->fGLSLGeneration = GrGLSLGeneration::k110_GrGLSLGeneration;
-        result->fFragCoordConventionsExtensionString = "GL_ARB_fragment_coord_conventions";
-        return result;
-    }
-
-    static ShaderCapsPointer GeometryShaderExtensionString() {
-        ShaderCapsPointer result = MakeShaderCaps();
-        result->fVersionDeclString = "#version 310es";
-        result->fGeometryShaderSupport = true;
-        result->fGeometryShaderExtensionString = "GL_EXT_geometry_shader";
-        result->fGSInvocationsSupport = true;
-        return result;
-    }
-
-    static ShaderCapsPointer GeometryShaderSupport() {
-        ShaderCapsPointer result = MakeShaderCaps();
-        result->fVersionDeclString = "#version 400";
-        result->fGeometryShaderSupport = true;
-        result->fGSInvocationsSupport = true;
-        return result;
-    }
-
-    static ShaderCapsPointer GSInvocationsExtensionString() {
-        ShaderCapsPointer result = MakeShaderCaps();
-        result->fVersionDeclString = "#version 400";
-        result->fGeometryShaderSupport = true;
-        result->fGSInvocationsSupport = true;
-        result->fGSInvocationsExtensionString = "GL_ARB_gpu_shader5";
+        result->fFBFetchSupport = true;
+        result->fFBFetchColorName = "gl_LastFragData[0]";
         return result;
     }
 
@@ -396,17 +361,16 @@ public:
         return result;
     }
 
-    static ShaderCapsPointer MustGuardDivisionEvenAfterExplicitZeroCheck() {
+    static ShaderCapsPointer MustForceNegatedLdexpParamToMultiply() {
         ShaderCapsPointer result = MakeShaderCaps();
-        result->fMustGuardDivisionEvenAfterExplicitZeroCheck = true;
+        result->fVersionDeclString = "#version 400";
+        result->fMustForceNegatedLdexpParamToMultiply = true;
         return result;
     }
 
-    static ShaderCapsPointer NoGSInvocationsSupport() {
+    static ShaderCapsPointer MustGuardDivisionEvenAfterExplicitZeroCheck() {
         ShaderCapsPointer result = MakeShaderCaps();
-        result->fVersionDeclString = "#version 400";
-        result->fGeometryShaderSupport = true;
-        result->fGSInvocationsSupport = false;
+        result->fMustGuardDivisionEvenAfterExplicitZeroCheck = true;
         return result;
     }
 
@@ -421,6 +385,27 @@ public:
         ShaderCapsPointer result = MakeShaderCaps();
         result->fVersionDeclString = "#version 400";
         result->fRewriteDoWhileLoops = true;
+        return result;
+    }
+
+    static ShaderCapsPointer RewriteMatrixComparisons() {
+        ShaderCapsPointer result = MakeShaderCaps();
+        result->fRewriteMatrixComparisons = true;
+        result->fUsesPrecisionModifiers = true;
+        return result;
+    }
+
+    static ShaderCapsPointer RewriteMatrixVectorMultiply() {
+        ShaderCapsPointer result = MakeShaderCaps();
+        result->fVersionDeclString = "#version 400";
+        result->fRewriteMatrixVectorMultiply = true;
+        return result;
+    }
+
+    static ShaderCapsPointer RewriteSwitchStatements() {
+        ShaderCapsPointer result = MakeShaderCaps();
+        result->fVersionDeclString = "#version 400";
+        result->fRewriteSwitchStatements = true;
         return result;
     }
 
@@ -470,13 +455,11 @@ private:
     static ShaderCapsPointer MakeShaderCaps();
 };
 
-#if !defined(SKSL_STANDALONE)
+#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
 bool type_to_grsltype(const Context& context, const Type& type, GrSLType* outType);
 #endif
 
 void write_stringstream(const StringStream& d, OutputStream& out);
-
-NORETURN void sksl_abort();
 
 }  // namespace SkSL
 

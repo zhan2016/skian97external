@@ -215,11 +215,17 @@ public:
         fFontFamilies = std::move(families);
     }
 
+    SkScalar getBaselineShift() const { return fBaselineShift; }
+    void setBaselineShift(SkScalar baselineShift) { fBaselineShift = baselineShift; }
+
     void setHeight(SkScalar height) { fHeight = height; }
     SkScalar getHeight() const { return fHeightOverride ? fHeight : 0; }
 
     void setHeightOverride(bool heightOverride) { fHeightOverride = heightOverride; }
     bool getHeightOverride() const { return fHeightOverride; }
+
+    void setHalfLeading(bool halfLeading) { fHalfLeading = halfLeading; }
+    bool getHalfLeading() const { return fHalfLeading; }
 
     void setLetterSpacing(SkScalar letterSpacing) { fLetterSpacing = letterSpacing; }
     SkScalar getLetterSpacing() const { return fLetterSpacing; }
@@ -243,6 +249,8 @@ public:
     void setPlaceholder() { fIsPlaceholder = true; }
 
 private:
+    static const std::vector<SkString> kDefaultFontFamilies;
+
     Decoration fDecoration = {
             TextDecoration::kNoDecoration,
             // TODO: switch back to kGaps when (if) switching flutter to skparagraph
@@ -255,10 +263,15 @@ private:
 
     SkFontStyle fFontStyle;
 
-    std::vector<SkString> fFontFamilies = { SkString(DEFAULT_FONT_FAMILY) };
+    std::vector<SkString> fFontFamilies = kDefaultFontFamilies;
+
     SkScalar fFontSize = 14.0;
     SkScalar fHeight = 1.0;
     bool fHeightOverride = false;
+    SkScalar fBaselineShift = 0.0f;
+    // true: half leading.
+    // false: scale ascent/descent with fHeight.
+    bool fHalfLeading = false;
     SkString fLocale = {};
     SkScalar fLetterSpacing = 0.0;
     SkScalar fWordSpacing = 0.0;

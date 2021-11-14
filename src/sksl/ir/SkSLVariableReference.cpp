@@ -7,15 +7,15 @@
 
 #include "src/sksl/ir/SkSLVariableReference.h"
 
-#include "src/sksl/SkSLIRGenerator.h"
 #include "src/sksl/ir/SkSLConstructor.h"
-#include "src/sksl/ir/SkSLFloatLiteral.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLSetting.h"
+#include "src/sksl/ir/SkSLVariable.h"
 
 namespace SkSL {
 
-VariableReference::VariableReference(int offset, const Variable* variable, RefKind refKind)
-    : INHERITED(offset, kExpressionKind, &variable->type())
+VariableReference::VariableReference(int line, const Variable* variable, RefKind refKind)
+    : INHERITED(line, kExpressionKind, &variable->type())
     , fVariable(variable)
     , fRefKind(refKind) {
     SkASSERT(this->variable());
@@ -36,7 +36,7 @@ bool VariableReference::isConstantOrUniform() const {
 }
 
 String VariableReference::description() const {
-    return this->variable()->name();
+    return String(this->variable()->name());
 }
 
 void VariableReference::setRefKind(RefKind refKind) {
@@ -45,24 +45,6 @@ void VariableReference::setRefKind(RefKind refKind) {
 
 void VariableReference::setVariable(const Variable* variable) {
     fVariable = variable;
-}
-
-std::unique_ptr<Expression> VariableReference::constantPropagate(const IRGenerator& irGenerator,
-                                                                 const DefinitionMap& definitions) {
-    if (this->refKind() != RefKind::kRead) {
-        return nullptr;
-    }
-    const Expression* initialValue = this->variable()->initialValue();
-    if ((this->variable()->modifiers().fFlags & Modifiers::kConst_Flag) && initialValue &&
-        initialValue->isCompileTimeConstant() &&
-        this->type().typeKind() != Type::TypeKind::kArray) {
-        return initialValue->clone();
-    }
-    std::unique_ptr<Expression>** exprPPtr = definitions.find(this->variable());
-    if (exprPPtr && *exprPPtr && (**exprPPtr)->isCompileTimeConstant()) {
-        return (**exprPPtr)->clone();
-    }
-    return nullptr;
 }
 
 }  // namespace SkSL

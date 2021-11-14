@@ -21,9 +21,7 @@
  */
 class GrContextThreadSafeProxyPriv {
 public:
-    void init(sk_sp<const GrCaps> caps) const {
-        fProxy->init(std::move(caps));
-    }
+    void init(sk_sp<const GrCaps>, sk_sp<GrThreadSafePipelineBuilder>) const;
 
     bool matches(GrContext_Base* candidate) const {
         return fProxy == candidate->threadSafeProxy().get();
@@ -50,7 +48,8 @@ public:
 
 private:
     explicit GrContextThreadSafeProxyPriv(GrContextThreadSafeProxy* proxy) : fProxy(proxy) {}
-    GrContextThreadSafeProxyPriv(const GrContextThreadSafeProxy&) = delete;
+    // Required until C++17 copy elision
+    GrContextThreadSafeProxyPriv(const GrContextThreadSafeProxyPriv&) = default;
     GrContextThreadSafeProxyPriv& operator=(const GrContextThreadSafeProxyPriv&) = delete;
 
     // No taking addresses of this type.

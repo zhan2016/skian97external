@@ -8,8 +8,8 @@
 #ifndef SKSL_CONTINUESTATEMENT
 #define SKSL_CONTINUESTATEMENT
 
+#include "include/private/SkSLStatement.h"
 #include "src/sksl/ir/SkSLExpression.h"
-#include "src/sksl/ir/SkSLStatement.h"
 
 namespace SkSL {
 
@@ -18,13 +18,17 @@ namespace SkSL {
  */
 class ContinueStatement final : public Statement {
 public:
-    static constexpr Kind kStatementKind = Kind::kContinue;
+    inline static constexpr Kind kStatementKind = Kind::kContinue;
 
-    ContinueStatement(int offset)
-    : INHERITED(offset, kStatementKind) {}
+    ContinueStatement(int line)
+    : INHERITED(line, kStatementKind) {}
+
+    static std::unique_ptr<Statement> Make(int line) {
+        return std::make_unique<ContinueStatement>(line);
+    }
 
     std::unique_ptr<Statement> clone() const override {
-        return std::unique_ptr<Statement>(new ContinueStatement(fOffset));
+        return std::make_unique<ContinueStatement>(fLine);
     }
 
     String description() const override {

@@ -39,14 +39,14 @@
 #include "src/core/SkMask.h"
 #include "src/core/SkMaskGamma.h"
 #include "src/core/SkMathPriv.h"
-#include "src/core/SkUtils.h"
+#include "src/core/SkOpts.h"
 #include "src/ports/SkScalerContext_mac_ct.h"
 #include "src/ports/SkTypeface_mac_ct.h"
 #include "src/sfnt/SkOTTableTypes.h"
 #include "src/sfnt/SkOTTable_OS_2.h"
 #include "src/utils/mac/SkCGBase.h"
 #include "src/utils/mac/SkCGGeometry.h"
-#include "src/utils/mac/SkCTFontSmoothBehavior.h"
+#include "src/utils/mac/SkCTFont.h"
 #include "src/utils/mac/SkUniqueCFRef.h"
 
 #include <algorithm>
@@ -122,9 +122,6 @@ SkScalerContext_Mac::SkScalerContext_Mac(sk_sp<SkTypeface_Mac> typeface,
 
 {
     CTFontRef ctFont = (CTFontRef)this->getTypeface()->internal_private_getCTFontRef();
-    CFIndex numGlyphs = CTFontGetGlyphCount(ctFont);
-    SkASSERT(numGlyphs >= 1 && numGlyphs <= 0xFFFF);
-    fGlyphCount = SkToU16(numGlyphs);
 
     // CT on (at least) 10.9 will size color glyphs down from the requested size, but not up.
     // As a result, it is necessary to know the actual device size and request that.
@@ -266,10 +263,6 @@ CGRGBPixel* SkScalerContext_Mac::Offscreen::getCG(const SkScalerContext_Mac& con
     SkASSERT(rowBytesPtr);
     *rowBytesPtr = rowBytes;
     return image;
-}
-
-unsigned SkScalerContext_Mac::generateGlyphCount(void) {
-    return fGlyphCount;
 }
 
 bool SkScalerContext_Mac::generateAdvance(SkGlyph* glyph) {

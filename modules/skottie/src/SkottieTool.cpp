@@ -214,7 +214,7 @@ public:
     }
 
     void report() const {
-        SkDebugf("Animation loaded with %lu error%s, %lu warning%s.\n",
+        SkDebugf("Animation loaded with %zu error%s, %zu warning%s.\n",
                  fErrors.size(), fErrors.size() == 1 ? "" : "s",
                  fWarnings.size(), fWarnings.size() == 1 ? "" : "s");
 
@@ -289,9 +289,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const auto scale_matrix = SkMatrix::MakeRectToRect(SkRect::MakeSize(anim->size()),
-                                                       SkRect::MakeIWH(FLAGS_width, FLAGS_height),
-                                                       SkMatrix::kCenter_ScaleToFit);
+    const auto scale_matrix = SkMatrix::RectToRect(SkRect::MakeSize(anim->size()),
+                                                   SkRect::MakeIWH(FLAGS_width, FLAGS_height),
+                                                   SkMatrix::kCenter_ScaleToFit);
     logger->report();
 
     const auto t0 = SkTPin(FLAGS_t0, 0.0, 1.0),
@@ -336,14 +336,6 @@ int main(int argc, char** argv) {
         i = frame_count - 1 - i;
 
         const auto start = std::chrono::steady_clock::now();
-#if defined(SK_BUILD_FOR_IOS)
-        // iOS doesn't support thread_local on versions less than 9.0.
-        auto anim = skottie::Animation::Builder()
-                            .setResourceProvider(rp)
-                            .setPrecompInterceptor(precomp_interceptor)
-                            .make(static_cast<const char*>(data->data()), data->size());
-        auto sink = MakeSink(FLAGS_format[0], scale_matrix);
-#else
         thread_local static auto* anim =
                 skottie::Animation::Builder()
                     .setResourceProvider(rp)
@@ -351,7 +343,6 @@ int main(int argc, char** argv) {
                     .make(static_cast<const char*>(data->data()), data->size())
                     .release();
         thread_local static auto* sink = MakeSink(FLAGS_format[0], scale_matrix).release();
-#endif
 
         if (sink && anim) {
             anim->seekFrame(frame0 + i * fps_scale);

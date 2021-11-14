@@ -27,14 +27,26 @@ class FieldAccess final : public Expression {
 public:
     using OwnerKind = FieldAccessOwnerKind;
 
-    static constexpr Kind kExpressionKind = Kind::kFieldAccess;
+    inline static constexpr Kind kExpressionKind = Kind::kFieldAccess;
 
     FieldAccess(std::unique_ptr<Expression> base, int fieldIndex,
                 OwnerKind ownerKind = OwnerKind::kDefault)
-    : INHERITED(base->fOffset, kExpressionKind, base->type().fields()[fieldIndex].fType)
+    : INHERITED(base->fLine, kExpressionKind, base->type().fields()[fieldIndex].fType)
     , fFieldIndex(fieldIndex)
     , fOwnerKind(ownerKind)
     , fBase(std::move(base)) {}
+
+    // Returns a field-access expression; reports errors via the ErrorReporter.
+    static std::unique_ptr<Expression> Convert(const Context& context,
+                                               SymbolTable& symbolTable,
+                                               std::unique_ptr<Expression> base,
+                                               skstd::string_view field);
+
+    // Returns a field-access expression; reports errors via ASSERT.
+    static std::unique_ptr<Expression> Make(const Context& context,
+                                            std::unique_ptr<Expression> base,
+                                            int fieldIndex,
+                                            OwnerKind ownerKind = OwnerKind::kDefault);
 
     std::unique_ptr<Expression>& base() {
         return fBase;

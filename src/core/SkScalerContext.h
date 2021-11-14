@@ -58,6 +58,11 @@ struct SkScalerContextRec {
     SkScalar    fPost2x2[2][2];
     SkScalar    fFrameWidth, fMiterLimit;
 
+    // This will be set if to the paint's foreground color if
+    // kNeedsForegroundColor is set, which will usually be the case for COLRv0 and
+    // COLRv1 fonts.
+    uint32_t fForegroundColor{SK_ColorBLACK};
+
 private:
     //These describe the parameters to create (uniquely identify) the pre-blend.
     uint32_t      fLumBits;
@@ -112,10 +117,11 @@ public:
         setContrast(0);
     }
 
-    uint8_t     fMaskFormat;
+    SkMask::Format fMaskFormat;
+
 private:
-    uint8_t     fStrokeJoin : 4;
-    uint8_t     fStrokeCap : 4;
+    uint8_t        fStrokeJoin : 4;
+    uint8_t        fStrokeCap  : 4;
 
 public:
     uint16_t    fFlags;
@@ -127,14 +133,15 @@ public:
 
     SkString dump() const {
         SkString msg;
-        msg.appendf("Rec\n");
-        msg.appendf("  textsize %g prescale %g preskew %g post [%g %g %g %g]\n",
+        msg.appendf("    Rec\n");
+        msg.appendf("      textsize %a prescale %a preskew %a post [%a %a %a %a]\n",
                    fTextSize, fPreScaleX, fPreSkewX, fPost2x2[0][0],
                    fPost2x2[0][1], fPost2x2[1][0], fPost2x2[1][1]);
-        msg.appendf("  frame %g miter %g format %d join %d cap %d flags %#hx\n",
+        msg.appendf("      frame %g miter %g format %d join %d cap %d flags %#hx\n",
                    fFrameWidth, fMiterLimit, fMaskFormat, fStrokeJoin, fStrokeCap, fFlags);
-        msg.appendf("  lum bits %x, device gamma %d, paint gamma %d contrast %d\n", fLumBits,
+        msg.appendf("      lum bits %x, device gamma %d, paint gamma %d contrast %d\n", fLumBits,
                     fDeviceGamma, fPaintGamma, fContrast);
+        msg.appendf("      foreground color %x", fForegroundColor);
         return msg;
     }
 
@@ -193,7 +200,7 @@ public:
     inline void setHinting(SkFontHinting);
 
     SkMask::Format getFormat() const {
-        return static_cast<SkMask::Format>(fMaskFormat);
+        return fMaskFormat;
     }
 
     SkColor getLuminanceColor() const {
@@ -256,6 +263,8 @@ public:
         kGenA8FromLCD_Flag        = 0x0800, // could be 0x200 (bit meaning dependent on fMaskFormat)
         kLinearMetrics_Flag       = 0x1000,
         kBaselineSnap_Flag        = 0x2000,
+
+        kNeedsForegroundColor_Flag = 0x4000,
     };
 
     // computed values
@@ -269,7 +278,7 @@ public:
     SkTypeface* getTypeface() const { return fTypeface.get(); }
 
     SkMask::Format getMaskFormat() const {
-        return (SkMask::Format)fRec.fMaskFormat;
+        return fRec.fMaskFormat;
     }
 
     bool isSubpixel() const {
@@ -283,8 +292,7 @@ public:
     // DEPRECATED
     bool isVertical() const { return false; }
 
-    unsigned    getGlyphCount() { return this->generateGlyphCount(); }
-    void        getMetrics(SkGlyph*);
+    SkGlyph     makeGlyph(SkPackedGlyphID);
     void        getImage(const SkGlyph&);
     bool SK_WARN_UNUSED_RESULT getPath(SkPackedGlyphID, SkPath*);
     void        getFontMetrics(SkFontMetrics*);
@@ -319,10 +327,7 @@ public:
                 SkScalerContextFlags::kNone, SkMatrix::I(), rec, effects);
     }
 
-    static SkDescriptor*  MakeDescriptorForPaths(SkFontID fontID,
-                                                 SkAutoDescriptor* ad);
-
-    static SkScalerContext* MakeEmptyContext(
+    static std::unique_ptr<SkScalerContext> MakeEmpty(
             sk_sp<SkTypeface> typeface, const SkScalerContextEffects& effects,
             const SkDescriptor* desc);
 
@@ -371,7 +376,7 @@ protected:
     /** Generates the contents of glyph.fWidth, fHeight, fTop, fLeft,
      *  as well as fAdvanceX and fAdvanceY if not already set.
      *
-     *  TODO: fMaskFormat is set by getMetrics later; cannot be set here.
+     *  TODO: fMaskFormat is set by internalMakeGlyph later; cannot be set here.
      */
     virtual void generateMetrics(SkGlyph* glyph) = 0;
 
@@ -395,9 +400,6 @@ protected:
     /** Retrieves font metrics. */
     virtual void generateFontMetrics(SkFontMetrics*) = 0;
 
-    /** Returns the number of glyphs in the font. */
-    virtual unsigned generateGlyphCount() = 0;
-
     void forceGenerateImageFromPath() { fGenerateImageFromPath = true; }
     void forceOffGenerateImageFromPath() { fGenerateImageFromPath = false; }
 
@@ -420,7 +422,8 @@ private:
     bool fGenerateImageFromPath;
 
     /** Returns false if the glyph has no path at all. */
-    bool internalGetPath(SkPackedGlyphID id, SkPath* devPath);
+    bool internalGetPath(SkPackedGlyphID id, SkPath* devPath, bool* hairline);
+    SkGlyph internalMakeGlyph(SkPackedGlyphID packedID, SkMask::Format format);
 
     // SkMaskGamma::PreBlend converts linear masks to gamma correcting masks.
 protected:

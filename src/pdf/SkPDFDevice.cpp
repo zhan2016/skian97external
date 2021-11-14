@@ -24,7 +24,6 @@
 #include "src/core/SkAdvancedTypefaceMetrics.h"
 #include "src/core/SkAnnotationKeys.h"
 #include "src/core/SkBitmapDevice.h"
-#include "src/core/SkClipOpPriv.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkGlyphRun.h"
@@ -136,7 +135,8 @@ sk_sp<SkImage> alpha_image_to_greyscale_image(const SkImage* mask) {
                           greyBitmap.getPixels(), greyBitmap.rowBytes(), 0, 0)) {
         return nullptr;
     }
-    return SkImage::MakeFromBitmap(greyBitmap);
+    greyBitmap.setImmutable();
+    return greyBitmap.asImage();
 }
 
 static int add_resource(SkTHashSet<SkPDFIndirectReference>& resources, SkPDFIndirectReference ref) {
@@ -180,7 +180,7 @@ static SkTCopyOnFirstWrite<SkPaint> clean_paint(const SkPaint& srcPaint) {
     SkTCopyOnFirstWrite<SkPaint> paint(srcPaint);
     // If the paint will definitely draw opaquely, replace kSrc with
     // kSrcOver.  http://crbug.com/473572
-    if (SkBlendMode::kSrcOver != paint->getBlendMode() &&
+    if (!paint->isSrcOver() &&
         kSrcOver_SkXfermodeInterpretation == SkInterpretXfermode(*paint, false))
     {
         paint.writable()->setBlendMode(SkBlendMode::kSrcOver);
@@ -240,7 +240,7 @@ public:
             NOT_IMPLEMENTED(!matrix.hasPerspective(), false);
             return;
         }
-        fBlendMode = paint.getBlendMode();
+        fBlendMode = paint.getBlendMode_or(SkBlendMode::kSrcOver);
         fContentStream =
             fDevice->setUpContentEntry(clipStack, matrix, paint, textScale, &fDstFormXObject);
     }
@@ -332,7 +332,7 @@ void SkPDFDevice::drawAnnotation(const SkRect& rect, const char key[], SkData* v
     }
     // Annotations are specified in absolute coordinates, so the page xform maps from device space
     // to the global space, and applies the document transform.
-    SkMatrix pageXform = this->deviceToGlobal();
+    SkMatrix pageXform = this->deviceToGlobal().asM33();
     pageXform.postConcat(fDocument->currentPageTransform());
     if (rect.isEmpty()) {
         if (!strcmp(key, SkPDFGetNodeIdKey())) {
@@ -410,9 +410,9 @@ void SkPDFDevice::drawPoints(SkCanvas::PointMode mode,
     }
 
     // SkDraw::drawPoints converts to multiple calls to fDevice->drawPath.
-    // We only use this when there's a path effect because of the overhead
+    // We only use this when there's a path effect or perspective because of the overhead
     // of multiple calls to setUpContentEntry it causes.
-    if (paint->getPathEffect()) {
+    if (paint->getPathEffect() || this->localToDevice().hasPerspective()) {
         draw_points(mode, count, points, *paint, this->devClipBounds(), this);
         return;
     }
@@ -630,17 +630,19 @@ void SkPDFDevice::internalDrawPath(const SkClipStack& clipStack,
 void SkPDFDevice::drawImageRect(const SkImage* image,
                                 const SkRect* src,
                                 const SkRect& dst,
+                                const SkSamplingOptions& sampling,
                                 const SkPaint& paint,
                                 SkCanvas::SrcRectConstraint) {
     SkASSERT(image);
     this->internalDrawImageRect(SkKeyedImage(sk_ref_sp(const_cast<SkImage*>(image))),
-                                src, dst, paint, this->localToDevice());
+                                src, dst, sampling, paint, this->localToDevice());
 }
 
 void SkPDFDevice::drawSprite(const SkBitmap& bm, int x, int y, const SkPaint& paint) {
     SkASSERT(!bm.drawsNothing());
     auto r = SkRect::MakeXYWH(x, y, bm.width(), bm.height());
-    this->internalDrawImageRect(SkKeyedImage(bm), nullptr, r, paint, SkMatrix::I());
+    this->internalDrawImageRect(SkKeyedImage(bm), nullptr, r, SkSamplingOptions(), paint,
+                                SkMatrix::I());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -662,13 +664,16 @@ public:
             fInText = false;
         }
     }
-    void setWideChars(bool wide) {
+    void setFont(SkPDFFont* pdfFont) {
         this->flush();
-        fWideChars = wide;
+        fPDFFont = pdfFont;
+        // Reader 2020.013.20064 incorrectly advances some Type3 fonts https://crbug.com/1226960
+        bool convertedToType3 = fPDFFont->getType() == SkAdvancedTypefaceMetrics::kOther_Font;
+        bool thousandEM = fPDFFont->typeface()->getUnitsPerEm() == 1000;
+        fViewersAgreeOnAdvancesInFont = thousandEM || !convertedToType3;
     }
-    void writeGlyph(SkPoint xy,
-                    SkScalar advanceWidth,
-                    uint16_t glyph) {
+    void writeGlyph(uint16_t glyph, SkScalar advanceWidth, SkPoint xy) {
+        SkASSERT(fPDFFont);
         if (!fInitialized) {
             // Flip the text about the x-axis to account for origin swap and include
             // the passed parameters.
@@ -683,7 +688,7 @@ public:
             fInitialized = true;
         }
         SkPoint position = xy - fCurrentMatrixOrigin;
-        if (position != SkPoint{fXAdvance, 0}) {
+        if (!fViewersAgreeOnXAdvance || position != SkPoint{fXAdvance, 0}) {
             this->flush();
             SkPDFUtils::AppendScalar(position.x() - position.y() * fTextSkewX, fContent);
             fContent->writeText(" ");
@@ -691,13 +696,17 @@ public:
             fContent->writeText(" Td ");
             fCurrentMatrixOrigin = xy;
             fXAdvance = 0;
+            fViewersAgreeOnXAdvance = true;
         }
         fXAdvance += advanceWidth;
+        if (!fViewersAgreeOnAdvancesInFont) {
+            fViewersAgreeOnXAdvance = false;
+        }
         if (!fInText) {
             fContent->writeText("<");
             fInText = true;
         }
-        if (fWideChars) {
+        if (fPDFFont->multiByteGlyphs()) {
             SkPDFUtils::WriteUInt16BE(fContent, glyph);
         } else {
             SkASSERT(0 == glyph >> 8);
@@ -707,10 +716,12 @@ public:
 
 private:
     SkDynamicMemoryWStream* fContent;
+    SkPDFFont* fPDFFont = nullptr;
     SkPoint fCurrentMatrixOrigin;
     SkScalar fXAdvance = 0.0f;
+    bool fViewersAgreeOnAdvancesInFont = true;
+    bool fViewersAgreeOnXAdvance = true;
     SkScalar fTextSkewX;
-    bool fWideChars = true;
     bool fInText = false;
     bool fInitialized = false;
 };
@@ -929,8 +940,7 @@ void SkPDFDevice::internalDrawGlyphRun(
                 // Not yet specified font or need to switch font.
                 font = SkPDFFont::GetFontResource(fDocument, glyphs[index], typeface);
                 SkASSERT(font);  // All preconditions for SkPDFFont::GetFontResource are met.
-                glyphPositioner.flush();
-                glyphPositioner.setWideChars(font->multiByteGlyphs());
+                glyphPositioner.setFont(font);
                 SkPDFWriteResourceName(out, SkPDFResourceType::kFont,
                                        add_resource(fFontResources, font->indirectReference()));
                 out->writeText(" ");
@@ -939,17 +949,17 @@ void SkPDFDevice::internalDrawGlyphRun(
 
             }
             font->noteGlyphUsage(gid);
-            SkGlyphID encodedGlyph = font->multiByteGlyphs()
-                                   ? gid : font->glyphToPDFFontEncoding(gid);
+            SkGlyphID encodedGlyph = font->glyphToPDFFontEncoding(gid);
             SkScalar advance = advanceScale * glyphs[index]->advanceX();
-            glyphPositioner.writeGlyph(xy, advance, encodedGlyph);
+            glyphPositioner.writeGlyph(encodedGlyph, advance, xy);
         }
     }
 }
 
-void SkPDFDevice::drawGlyphRunList(const SkGlyphRunList& glyphRunList) {
+void SkPDFDevice::onDrawGlyphRunList(const SkGlyphRunList& glyphRunList, const SkPaint& paint) {
+    SkASSERT(!glyphRunList.hasRSXForm());
     for (const SkGlyphRun& glyphRun : glyphRunList) {
-        this->internalDrawGlyphRun(glyphRun, glyphRunList.origin(), glyphRunList.paint());
+        this->internalDrawGlyphRun(glyphRun, glyphRunList.origin(), paint);
     }
 }
 
@@ -976,7 +986,9 @@ sk_sp<SkSurface> SkPDFDevice::makeSurface(const SkImageInfo& info, const SkSurfa
 static std::vector<SkPDFIndirectReference> sort(const SkTHashSet<SkPDFIndirectReference>& src) {
     std::vector<SkPDFIndirectReference> dst;
     dst.reserve(src.count());
-    src.foreach([&dst](SkPDFIndirectReference ref) { dst.push_back(ref); } );
+    for (SkPDFIndirectReference ref : src) {
+        dst.push_back(ref);
+    }
     std::sort(dst.begin(), dst.end(),
             [](SkPDFIndirectReference a, SkPDFIndirectReference b) { return a.fValue < b.fValue; });
     return dst;
@@ -1149,6 +1161,8 @@ static void populate_graphic_state_entry_from_paint(
     // PDF treats a shader as a color, so we only set one or the other.
     SkShader* shader = paint.getShader();
     if (shader) {
+        // note: we always present the alpha as 1 for the shader, knowing that it will be
+        //       accounted for when we create our newGraphicsState (below)
         if (SkShader::kColor_GradientType == shader->asAGradient(nullptr)) {
             // We don't have to set a shader just for a color.
             SkShader::GradientInfo gradientInfo;
@@ -1177,8 +1191,9 @@ static void populate_graphic_state_entry_from_paint(
             SkIRect bounds;
             clipStackBounds.roundOut(&bounds);
 
-            SkPDFIndirectReference pdfShader
-                = SkPDFMakeShader(doc, shader, transform, bounds, paint.getColor4f());
+            auto c = paint.getColor4f();
+            SkPDFIndirectReference pdfShader = SkPDFMakeShader(doc, shader, transform, bounds,
+                                                               {c.fR, c.fG, c.fB, 1.0f});
 
             if (pdfShader) {
                 // pdfShader has been canonicalized so we can directly compare pointers.
@@ -1205,7 +1220,7 @@ SkDynamicMemoryWStream* SkPDFDevice::setUpContentEntry(const SkClipStack* clipSt
                                                        SkScalar textScale,
                                                        SkPDFIndirectReference* dst) {
     SkASSERT(!*dst);
-    SkBlendMode blendMode = paint.getBlendMode();
+    SkBlendMode blendMode = paint.getBlendMode_or(SkBlendMode::kSrcOver);
 
     // Dst xfer mode doesn't draw source at all.
     if (blendMode == SkBlendMode::kDst) {
@@ -1414,7 +1429,7 @@ static sk_sp<SkImage> color_filter(const SkImage* image,
     canvas->clear(SK_ColorTRANSPARENT);
     SkPaint paint;
     paint.setColorFilter(sk_ref_sp(colorFilter));
-    canvas->drawImage(image, 0, 0, &paint);
+    canvas->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
     return surface->makeImageSnapshot();
 }
 
@@ -1434,6 +1449,7 @@ static bool is_integral(const SkRect& r) {
 void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
                                         const SkRect* src,
                                         const SkRect& dst,
+                                        const SkSamplingOptions& sampling,
                                         const SkPaint& srcPaint,
                                         const SkMatrix& ctm) {
     if (this->hasEmptyClip()) {
@@ -1446,8 +1462,7 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
     // First, figure out the src->dst transform and subset the image if needed.
     SkIRect bounds = imageSubset.image()->bounds();
     SkRect srcRect = src ? *src : SkRect::Make(bounds);
-    SkMatrix transform;
-    transform.setRectToRect(srcRect, dst, SkMatrix::kFill_ScaleToFit);
+    SkMatrix transform = SkMatrix::RectToRect(srcRect, dst);
     if (src && *src != SkRect::Make(bounds)) {
         if (!srcRect.intersect(SkRect::Make(bounds))) {
             return;
@@ -1466,7 +1481,7 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
     // If the image is opaque and the paint's alpha is too, replace
     // kSrc blendmode with kSrcOver.  http://crbug.com/473572
     SkTCopyOnFirstWrite<SkPaint> paint(srcPaint);
-    if (SkBlendMode::kSrcOver != paint->getBlendMode() &&
+    if (!paint->isSrcOver() &&
         imageSubset.image()->isOpaque() &&
         kSrcOver_SkXfermodeInterpretation == SkInterpretXfermode(*paint, false))
     {
@@ -1486,7 +1501,7 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
         tmpPaint.setShader(sk_ref_sp(paint->getShader()));
         tmpPaint.setColor4f(paint->getColor4f(), nullptr);
         canvas->clear(0x00000000);
-        canvas->drawImage(imageSubset.image().get(), 0, 0, &tmpPaint);
+        canvas->drawImage(imageSubset.image().get(), 0, 0, sampling, &tmpPaint);
         if (paint->getShader() != nullptr) {
             paint.writable()->setShader(nullptr);
         }
@@ -1513,7 +1528,7 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
             canvas.concat(ctm);
             if (paint->getMaskFilter()) {
                 SkPaint tmpPaint;
-                tmpPaint.setShader(mask->makeShader(&transform));
+                tmpPaint.setShader(mask->makeShader(SkSamplingOptions(), transform));
                 tmpPaint.setMaskFilter(sk_ref_sp(paint->getMaskFilter()));
                 canvas.drawRect(dst, tmpPaint);
             } else {
@@ -1541,7 +1556,8 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
         return;
     }
     if (paint->getMaskFilter()) {
-        paint.writable()->setShader(imageSubset.image()->makeShader(&transform));
+        paint.writable()->setShader(imageSubset.image()->makeShader(SkSamplingOptions(),
+                                                                    transform));
         SkPath path = SkPath::Rect(dst); // handles non-integral clipping.
         this->internalDrawPath(this->cs(), this->localToDevice(), path, *paint, true);
         return;
@@ -1567,15 +1583,15 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
         SkPath perspectiveOutline = SkPath::Rect(imageBounds).makeTransform(transform);
 
         // Retrieve the bounds of the new shape.
-        SkRect bounds = perspectiveOutline.getBounds();
-        if (!bounds.intersect(SkRect::Make(this->devClipBounds()))) {
+        SkRect outlineBounds = perspectiveOutline.getBounds();
+        if (!outlineBounds.intersect(SkRect::Make(this->devClipBounds()))) {
             return;
         }
 
         // Transform the bitmap in the new space to the final space, to account for DPI
-        SkRect physicalBounds = fInitialTransform.mapRect(bounds);
-        SkScalar scaleX = physicalBounds.width() / bounds.width();
-        SkScalar scaleY = physicalBounds.height() / bounds.height();
+        SkRect physicalBounds = fInitialTransform.mapRect(outlineBounds);
+        SkScalar scaleX = physicalBounds.width() / outlineBounds.width();
+        SkScalar scaleY = physicalBounds.height() / outlineBounds.height();
 
         // TODO(edisonn): A better approach would be to use a bitmap shader
         // (in clamp mode) and draw a rect over the entire bounding box. Then
@@ -1593,8 +1609,8 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
         SkCanvas* canvas = surface->getCanvas();
         canvas->clear(SK_ColorTRANSPARENT);
 
-        SkScalar deltaX = bounds.left();
-        SkScalar deltaY = bounds.top();
+        SkScalar deltaX = outlineBounds.left();
+        SkScalar deltaY = outlineBounds.top();
 
         SkMatrix offsetMatrix = transform;
         offsetMatrix.postTranslate(-deltaX, -deltaY);
@@ -1666,7 +1682,8 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-void SkPDFDevice::drawDevice(SkBaseDevice* device, const SkPaint& paint) {
+void SkPDFDevice::drawDevice(SkBaseDevice* device, const SkSamplingOptions& sampling,
+                             const SkPaint& paint) {
     SkASSERT(!paint.getImageFilter());
     SkASSERT(!paint.getMaskFilter());
 
@@ -1675,7 +1692,7 @@ void SkPDFDevice::drawDevice(SkBaseDevice* device, const SkPaint& paint) {
     // a raster device to apply color filters, too).
     SkPixmap pmap;
     if (device->peekPixels(&pmap)) {
-        this->INHERITED::drawDevice(device, paint);
+        this->INHERITED::drawDevice(device, sampling, paint);
         return;
     }
 
@@ -1703,7 +1720,7 @@ void SkPDFDevice::drawDevice(SkBaseDevice* device, const SkPaint& paint) {
 }
 
 void SkPDFDevice::drawSpecial(SkSpecialImage* srcImg, const SkMatrix& localToDevice,
-                              const SkPaint& paint) {
+                              const SkSamplingOptions& sampling, const SkPaint& paint) {
     if (this->hasEmptyClip()) {
         return;
     }
@@ -1713,16 +1730,18 @@ void SkPDFDevice::drawSpecial(SkSpecialImage* srcImg, const SkMatrix& localToDev
     SkBitmap resultBM;
     if (srcImg->getROPixels(&resultBM)) {
         auto r = SkRect::MakeWH(resultBM.width(), resultBM.height());
-        this->internalDrawImageRect(SkKeyedImage(resultBM), nullptr, r, paint, localToDevice);
+        this->internalDrawImageRect(SkKeyedImage(resultBM), nullptr, r, sampling, paint,
+                                    localToDevice);
     }
 }
 
 sk_sp<SkSpecialImage> SkPDFDevice::makeSpecial(const SkBitmap& bitmap) {
-    return SkSpecialImage::MakeFromRaster(bitmap.bounds(), bitmap);
+    return SkSpecialImage::MakeFromRaster(bitmap.bounds(), bitmap, this->surfaceProps());
 }
 
 sk_sp<SkSpecialImage> SkPDFDevice::makeSpecial(const SkImage* image) {
-    return SkSpecialImage::MakeFromImage(nullptr, image->bounds(), image->makeNonTextureImage());
+    return SkSpecialImage::MakeFromImage(nullptr, image->bounds(), image->makeNonTextureImage(),
+                                         this->surfaceProps());
 }
 
 SkImageFilterCache* SkPDFDevice::getImageFilterCache() {

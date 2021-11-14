@@ -62,6 +62,7 @@ enum class GrGLFormat {
     kR8,
     kALPHA8,
     kLUMINANCE8,
+    kLUMINANCE8_ALPHA8,
     kBGRA8,
     kRGB565,
     kRGBA16F,
@@ -191,6 +192,15 @@ struct GrGLFramebufferInfo {
     bool operator==(const GrGLFramebufferInfo& that) const {
         return fFBOID == that.fFBOID && fFormat == that.fFormat;
     }
+};
+
+struct GrGLSurfaceInfo {
+    uint32_t fSampleCount = 1;
+    uint32_t fLevelCount = 0;
+    GrProtected fProtected = GrProtected::kNo;
+
+    GrGLenum fTarget = 0;
+    GrGLenum fFormat = 0;
 };
 
 #endif

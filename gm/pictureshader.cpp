@@ -35,10 +35,13 @@ static struct {
 
 class PictureShaderGM : public skiagm::GM {
 public:
-    PictureShaderGM(SkScalar tileSize, SkScalar sceneSize, bool useLocalMatrixWrapper = false)
+    PictureShaderGM(SkScalar tileSize, SkScalar sceneSize, bool useLocalMatrixWrapper = false,
+                    float alpha = 1)
         : fTileSize(tileSize)
         , fSceneSize(sceneSize)
-        , fUseLocalMatrixWrapper(useLocalMatrixWrapper) {}
+        , fAlpha(alpha)
+        , fUseLocalMatrixWrapper(useLocalMatrixWrapper)
+    {}
 
  protected:
     void onOnceBeforeDraw() override {
@@ -57,7 +60,9 @@ public:
 
 
     SkString onShortName() override {
-        return SkStringPrintf("pictureshader%s", fUseLocalMatrixWrapper ? "_localwrapper" : "");
+        return SkStringPrintf("pictureshader%s%s",
+                              fUseLocalMatrixWrapper ? "_localwrapper" : "",
+                              fAlpha < 1 ? "_alpha" : "");
     }
 
     SkISize onISize() override {
@@ -161,8 +166,11 @@ private:
         canvas->drawRect(SkRect::MakeWH(fSceneSize, fSceneSize), paint);
         canvas->drawRect(SkRect::MakeXYWH(fSceneSize * 1.1f, 0, fSceneSize, fSceneSize), paint);
 
+        paint.setAlphaf(fAlpha);
+
         auto pictureShader = fPicture->makeShader(kTileConfigs[tileMode].tmx,
                                                   kTileConfigs[tileMode].tmy,
+                                                  SkFilterMode::kNearest,
                                                   fUseLocalMatrixWrapper ? nullptr : &localMatrix,
                                                   nullptr);
         paint.setShader(fUseLocalMatrixWrapper
@@ -172,11 +180,10 @@ private:
 
         canvas->translate(fSceneSize * 1.1f, 0);
 
-        auto bitmapShader = fBitmap.makeShader(
-                                                       kTileConfigs[tileMode].tmx,
-                                                       kTileConfigs[tileMode].tmy,
-                                                       fUseLocalMatrixWrapper
-                                                           ? nullptr : &localMatrix);
+        auto bitmapShader = fBitmap.makeShader(kTileConfigs[tileMode].tmx,
+                                               kTileConfigs[tileMode].tmy,
+                                               SkSamplingOptions(),
+                                               fUseLocalMatrixWrapper ? nullptr : &localMatrix);
         paint.setShader(fUseLocalMatrixWrapper
                             ? bitmapShader->makeWithLocalMatrix(localMatrix)
                             : bitmapShader);
@@ -185,18 +192,20 @@ private:
         canvas->restore();
     }
 
-    sk_sp<SkPicture> fPicture;
-    SkBitmap fBitmap;
+    const SkScalar   fTileSize;
+    const SkScalar   fSceneSize;
+    const float      fAlpha;
+    const bool       fUseLocalMatrixWrapper;
 
-    SkScalar    fTileSize;
-    SkScalar    fSceneSize;
-    bool        fUseLocalMatrixWrapper;
+    sk_sp<SkPicture> fPicture;
+    SkBitmap         fBitmap;
 
     using INHERITED = GM;
 };
 
 DEF_GM(return new PictureShaderGM(50, 100);)
 DEF_GM(return new PictureShaderGM(50, 100, true);)
+DEF_GM(return new PictureShaderGM(50, 100, false, 0.25f);)
 
 DEF_SIMPLE_GM(tiled_picture_shader, canvas, 400, 400) {
     // https://code.google.com/p/skia/issues/detail?id=3398
@@ -223,6 +232,7 @@ DEF_SIMPLE_GM(tiled_picture_shader, canvas, 400, 400) {
     p.setColor(0xFFB6B6B6);  // gray
     canvas->drawPaint(p);
 
-    p.setShader(picture->makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat));
+    p.setShader(picture->makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                    SkFilterMode::kNearest));
     canvas->drawPaint(p);
 }

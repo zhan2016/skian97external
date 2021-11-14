@@ -14,6 +14,11 @@
 
 #include <dwrite.h>
 
+#if defined(__clang__)
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wcast-function-type"
+#endif
+
 static IDWriteFactory* gDWriteFactory = nullptr;
 
 static void release_dwrite_factory() {
@@ -133,5 +138,9 @@ HRESULT SkGetGetUserDefaultLocaleNameProc(SkGetUserDefaultLocaleNameProc* proc) 
 #endif // SK_BUILD_FOR_WINRT
     return S_OK;
 }
+
+#if defined(__clang__)
+    #pragma clang diagnostic pop
+#endif
 
 #endif//defined(SK_BUILD_FOR_WIN)

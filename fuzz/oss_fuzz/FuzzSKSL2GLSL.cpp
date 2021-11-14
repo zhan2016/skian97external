@@ -11,12 +11,12 @@
 #include "fuzz/Fuzz.h"
 
 bool FuzzSKSL2GLSL(sk_sp<SkData> bytes) {
-    sk_sp<GrShaderCaps> caps = SkSL::ShaderCapsFactory::Default();
+    std::unique_ptr<GrShaderCaps> caps = SkSL::ShaderCapsFactory::Default();
     SkSL::Compiler compiler(caps.get());
     SkSL::String output;
     SkSL::Program::Settings settings;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                    SkSL::Program::kFragment_Kind,
+                                                    SkSL::ProgramKind::kFragment,
                                                     SkSL::String((const char*) bytes->data(),
                                                                  bytes->size()),
                                                     settings);
