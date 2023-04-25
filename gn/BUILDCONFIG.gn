@@ -29,12 +29,9 @@ declare_args() {
 
   win_vc = ""
   win_toolchain_version = ""
-  win_vcvars_version = ""
 
   clang_win = ""
   clang_win_version = ""
-
-  skia_moltenvk_path = ""
 
   ncli = ""
   ncli_version = "4.0"
@@ -47,6 +44,8 @@ declare_args() {
   min_watchos_version = "2.0"
   min_macos_version = "10.8"
   min_maccatalyst_version = "13.0"
+
+  ios_min_target = ""
 }
 declare_args() {
   is_debug = !is_official_build
@@ -84,6 +83,9 @@ is_tizen = current_os == "tizen"
 # This is just to make the Dawn build files happy. Skia itself uses target_os = "linux"
 # for ChromeOS, so this variable will not affect Skia proper.
 is_chromeos = false
+
+# This is to make the ANGLE build files happy. Skia always uses is_mac and/or is_ios.
+is_apple = is_mac || is_ios
 
 if (target_cpu == "") {
   target_cpu = host_cpu
@@ -159,17 +161,8 @@ if (is_win) {
   if (win_vc == "") {
     win_vc = exec_script("//gn/find_msvc.py", [], "trim string")
   }
-  if (win_vc != "") {
-    if (win_toolchain_version == "") {
-      if (win_vcvars_version != "") {
-        win_toolchain_version = exec_script("//gn/highest_version_dir.py", [ "$win_vc/Tools/MSVC", "$win_vcvars_version[0-9]{1}\.[0-9]{5}" ], "trim string")
-      } else {
-        win_toolchain_version = exec_script("//gn/highest_version_dir.py", [ "$win_vc/Tools/MSVC", "[0-9]{2}\.[0-9]{2}\.[0-9]{5}" ], "trim string")
-      }
-    }
-    if (win_vcvars_version == "") {
-      win_vcvars_version = exec_script("//gn/get_vcvars_version.py", [ win_toolchain_version ], "trim string")
-    }
+  if (win_vc != "" && win_toolchain_version == "") {
+    win_toolchain_version = exec_script("//gn/highest_version_dir.py", [ "$win_vc/Tools/MSVC", "[0-9]{2}\.[0-9]{2}\.[0-9]{5}" ], "trim string")
   }
   if (win_sdk == "") {
     win_sdk = exec_script("//gn/find_winsdk.py", [], "trim string")
@@ -240,15 +233,9 @@ if (!is_debug) {
   ]
 }
 if (!is_official_build) {
-  default_configs += [
-    "//gn:debug_symbols",
-    "//gn:warnings",
-  ]
+  default_configs += [ "//gn:debug_symbols" ]
 }
-default_configs += [
-  "//gn:warnings_except_public_headers",
-  "//gn:extra_flags",
-]
+default_configs += [ "//gn:extra_flags" ]
 
 set_defaults("executable") {
   configs = [ "//gn:executable" ] + default_configs
@@ -278,6 +265,17 @@ set_defaults("skiasharp_build") {
   if (is_static_skiasharp) {
     complete_static_lib = true
   }
+}
+
+skia_target_default_configs = []
+if (!is_official_build) {
+  skia_target_default_configs += [ "//gn:warnings" ]
+}
+
+skia_header_target_default_configs = []
+if (!is_official_build) {
+  skia_header_target_default_configs +=
+      [ "//gn:warnings_for_public_headers" ]
 }
 
 if (is_win) {
